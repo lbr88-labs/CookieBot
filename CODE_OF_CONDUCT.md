@@ -34,9 +34,7 @@ This Code of Conduct applies both within project spaces and in public spaces whe
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by contacting the project team at theprinzstani@gmail.com. The project team will review and investigate all complaints, and will respond in a way that it deems appropriate to the circumstances. The project team is obligated to maintain confidentiality with regard to the reporter of an incident. Further details of specific enforcement policies may be posted separately.
-
-Project maintainers who do not follow or enforce the Code of Conduct in good faith may face temporary or permanent repercussions as determined by other members of the project's leadership.
+The maintainers of this fork are responsible for enforcing these standards within this repository. This fork does not currently have a verified confidential reporting channel. Do not put private or sensitive incident details in a public issue or send reports about this fork to the upstream maintainer. A monitored, fork-controlled confidential reporting route will be published here when available.
 
 ## Attribution
 

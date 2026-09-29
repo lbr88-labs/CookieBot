@@ -5,8 +5,8 @@
 // @description Automated bot for Cookie Clicker game
 // @author lbr88
 // @include /https?://orteil.dashnet.org/cookieclicker/
-// @updateURL https://lbr88.github.io/CookieBot/CookieBot.user.js
-// @downloadURL https://lbr88.github.io/CookieBot/CookieBot.user.js
+// @updateURL https://lbr88-labs.github.io/CookieBot/CookieBot.user.js
+// @downloadURL https://lbr88-labs.github.io/CookieBot/CookieBot.user.js
 // @grant none
 // ==/UserScript==
 
@@ -34,7 +34,7 @@
 
   if (typeof Game !== 'undefined' && typeof Game.ready !== 'undefined' && Game.ready) {
    showStatus('Game ready, loading bot...');
-    Game.LoadMod('https://lbr88.github.io/CookieBot/cookieAutoPlayBeta.js');
+    Game.LoadMod('https://lbr88-labs.github.io/CookieBot/cookieAutoPlayBeta.js');
    clearInterval(readyCheck);
    setTimeout(() => showStatus('Bot loaded!'), 1000);
   }

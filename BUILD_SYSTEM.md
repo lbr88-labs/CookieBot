@@ -1,74 +1,42 @@
-# Build System Documentation
+# Build System
 
-## Overview
-The build system now generates versioned files and maintains a "latest" version for stable URLs.
+The maintained fork's Pages base is `https://lbr88-labs.github.io/CookieBot/`. This page describes the build outputs; it does not announce a release.
 
-## Output Files
+## Browser delivery channels
 
-### Versioned Build
-- **File**: `dist/cookieAutoPlayBeta-v{version}.js`
-- **Example**: `dist/cookieAutoPlayBeta-v2.052.3.js`
-- **Purpose**: Historical versions for tracking changes
+- The beta browser monolith is the root [`cookieAutoPlayBeta.js`](https://lbr88-labs.github.io/CookieBot/cookieAutoPlayBeta.js).
+- The root [`CookieBot.user.js`](CookieBot.user.js) is a separate beta userscript, maintained apart from the TypeScript build. Its `@updateURL`, `@downloadURL`, and `Game.LoadMod` now use the canonical Pages URLs. This correction has no browser runtime or save validation, and the root beta userscript has no stable designation.
+- The experimental TypeScript userscript is [`dist/CookieBot.user.js`](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js). At version `2.052-127`, it loads the pinned [`dist/cookieAutoPlayBeta-v2.052-127.js`](https://lbr88-labs.github.io/CookieBot/dist/cookieAutoPlayBeta-v2.052-127.js) bundle.
 
-### Latest Build
-- **File**: `dist/cookieAutoPlayBeta-latest.js`
-- **Purpose**: Stable URL that always points to the most recent version
-- **Used by**: Userscript for automatic updates
+The TypeScript build also produces `dist/cookieAutoPlayBeta-v{version}.js` and the `dist/cookieAutoPlayBeta-latest.js` copy. The generated TypeScript userscript loads the matching versioned bundle; it does not request `latest`. The `latest` file is a separate alias for direct consumers.
 
-### Userscript
-- **File**: `dist/CookieBot.user.js`
-- **Purpose**: Tampermonkey/Greasemonkey userscript loader
-- **URL**: `https://lbr88.github.io/CookieBot/dist/CookieBot.user.js`
+**Validation status:** the checked-in TypeScript userscript and its generator now use canonical Pages URLs in update/download metadata and the pinned bundle URL; the root beta userscript uses those canonical URLs as well. Neither userscript has browser runtime or save validation, and neither has a stable designation. The canonical beta browser monolith and Steam wrapper above use the same Pages host.
 
-## Build Commands
+The legacy stable loader is separate from these fork beta channels. Do not treat it or `CookieBot4Steam.zip` as maintained beta artifacts.
+
+## Build commands
 
 ```bash
-# Build TypeScript to JavaScript with versioning
+# Regenerate dist/CookieBot.user.js from package.json metadata; does not bump version
+node scripts/build-userscript.js
+
+# Versioning build: run the bump step, bundle TypeScript, copy the latest alias,
+# and regenerate the TypeScript userscript
 npm run build
 
-# Build TypeScript + Generate userscript
-npm run build:userscript
-
-# Development mode with watch
+# Development watch and type checking
 npm run dev
-
-# Type checking only
 npm run type-check
 ```
 
-## GitHub Pages Setup
+`npm run build` runs `scripts/bump-version.js` first. That script increments the numeric version suffix when its tracked source hash has changed; it can leave the version as-is when there are no detected changes. The standalone `node scripts/build-userscript.js` command reads the existing `package.json` version and writes only `dist/CookieBot.user.js`; it does not compile TypeScript or bump the version.
 
-The `dist/` folder is now tracked by git and served by GitHub Pages at:
-- **Base URL**: `https://lbr88.github.io/CookieBot/dist/`
-- **Latest JS**: `https://lbr88.github.io/CookieBot/dist/cookieAutoPlayBeta-latest.js`
-- **Userscript**: `https://lbr88.github.io/CookieBot/dist/CookieBot.user.js`
+## Generated files and version behavior
 
-## Version Management
+Webpack writes the versioned bundle as `dist/cookieAutoPlayBeta-v{version}.js`. `scripts/post-build.js` copies that bundle to `dist/cookieAutoPlayBeta-latest.js`. `scripts/build-userscript.js` writes `dist/CookieBot.user.js`, whose `Game.LoadMod` URL includes the same versioned filename. For the checked-in `2.052-127` userscript, that filename is `cookieAutoPlayBeta-v2.052-127.js`.
 
-Version is controlled by `package.json`:
-```json
-{
-  "version": "2.052.3"
-}
-```
+The TypeScript artifacts are experimental and distinct from the root beta monolith and root beta userscript. Install one channel at a time. Before comparing channels, export a backup and use a disposable save; legacy beta and TypeScript configuration paths overlap (`autoplayConfig` and `CookieBot_Config`) and settings parity has not been established.
 
-To release a new version:
-1. Update version in `package.json`
-2. Run `npm run build:userscript`
-3. Commit and push to GitHub
-4. GitHub Pages will automatically serve the new files
+## Upstream and legacy files
 
-## How It Works
-
-1. **Webpack** reads version from `package.json`
-2. **Webpack** outputs `cookieAutoPlayBeta-v{version}.js`
-3. **post-build.js** copies versioned file to `cookieAutoPlayBeta-latest.js`
-4. **build-userscript.js** generates userscript that loads the latest version
-5. Users install the userscript, which always loads the latest build
-
-## Benefits
-
-- **Stable URLs**: Users' userscripts never break
-- **Version History**: Keep all previous versions
-- **Easy Updates**: Users get updates automatically
-- **GitHub Pages**: Free hosting for all files
+The legacy `cookieAutoPlay.js` loader requests `https://api.github.com/repos/prinzstani/CookieBot/releases/latest`, reads the returned release tag, then loads that tag’s `cookieAutoPlayBeta.js` through `https://cdn.rawgit.com/prinzstani/CookieBot/{tag}/cookieAutoPlayBeta.js`. `CookieBot4Steam.zip` retains this legacy loader. Neither is generated by this TypeScript build; this legacy path is not redirected to the maintained fork beta and does not represent a new release.

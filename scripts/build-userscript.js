@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const pagesBaseUrl = 'https://lbr88-labs.github.io/CookieBot';
 
 // Read package.json for version
 const packageJson = JSON.parse(
@@ -25,8 +26,8 @@ const header = `// ==UserScript==
 // @description Automated bot for Cookie Clicker game (TypeScript version)
 // @author lbr88
 // @include /https?://orteil.dashnet.org/cookieclicker/
-// @updateURL https://lbr88.github.io/CookieBot/dist/CookieBot.user.js
-// @downloadURL https://lbr88.github.io/CookieBot/dist/CookieBot.user.js
+// @updateURL ${pagesBaseUrl}/dist/CookieBot.user.js
+// @downloadURL ${pagesBaseUrl}/dist/CookieBot.user.js
 // @grant none
 // ==/UserScript==
 
@@ -58,7 +59,7 @@ const wrapper = `(function() {
     if (typeof Game !== 'undefined' && typeof Game.ready !== 'undefined' && Game.ready) {
       showStatus('Game ready, loading bot...');
       // Load the compiled TypeScript version from dist (versioned file matches userscript version)
-      Game.LoadMod('https://lbr88.github.io/CookieBot/dist/cookieAutoPlayBeta-v${packageJson.version}.js');
+      Game.LoadMod('${pagesBaseUrl}/dist/cookieAutoPlayBeta-v${packageJson.version}.js');
       clearInterval(readyCheck);
       setTimeout(() => showStatus('Bot loaded!'), 1000);
     }
