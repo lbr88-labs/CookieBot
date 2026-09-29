@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output - Keep dist/ for GitHub Pages
+# dist/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+
+# Game source
+src/Game.js
+
+# Local game runner data
+saves/
+profiles/
+
+# Build artifacts
+scripts/.last-build-hash
+
+dashboard_mini_view.png

@@ -56,6 +56,11 @@ AutoPlay.savingsGoal = 0;
 AutoPlay.savingsStart = Game.startDate;  // time since start of saving
 AutoPlay.buy10 = false;
 AutoPlay.hyperActive=false;
+AutoPlay.actionHistory = [];
+AutoPlay.statusHistory = [];
+AutoPlay.maxHistorySize = 20;
+AutoPlay.dashboardCollapsed = false;
+AutoPlay.lastStatus = {}; // Track last status to avoid duplicates
 
 AutoPlay.run = function() {
   if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
@@ -85,18 +90,66 @@ AutoPlay.run = function() {
     AutoPlay.handleAscend(); // check ascend often for lucky payout
   }
   if (AutoPlay.now<AutoPlay.deadline) return;  // end of speed activity
-  // run only once a minute from here
+  // run periodically from here (every 15 seconds)
   if (Game.bakeryNameL.textContent.slice(0,AutoPlay.robotName.length)!=AutoPlay.robotName) {
     Game.bakeryNameL.textContent = AutoPlay.robotName+Game.bakeryNameL.textContent;
   } // write the robot name in front of the bakery name
   AutoPlay.activities = AutoPlay.mainActivity;
-  AutoPlay.status(false);
+
+  // Skip status() when menu is open - it closes the menu
+  if (!Game.onMenu) {
+    AutoPlay.status(false);
+  }
+
   if (AutoPlay.plantPending)
     AutoPlay.addActivity("Make sure to harvest the new plant before ascend!");
-  AutoPlay.deadline=AutoPlay.now+60000; // wait one minute before next step
-  AutoPlay.setDeadline(AutoPlay.now+(AutoPlay.now-Game.startDate)/10); // quick start
 
-  // run only once a minute
+  // Calculate dynamic deadline based on when next purchase is affordable
+  var dynamicDeadline = 15000; // Default 15 seconds
+  if (AutoPlay.nextPurchasePrice && Game.cookiesPs > 0) {
+    var availableCookies = Game.cookies - (AutoPlay.savingsGoal || 0);
+    var needsForPurchase = AutoPlay.nextPurchasePrice - availableCookies;
+
+    if (needsForPurchase > 0) {
+      // Calculate seconds until affordable (with small buffer to catch it early)
+      var timeToAfford = (needsForPurchase / Game.cookiesPs) * 1000; // Convert to milliseconds
+      var bufferTime = 500; // Check 0.5s before affordable to ensure we don't miss it
+      timeToAfford = Math.max(timeToAfford - bufferTime, 100);
+
+      // Smart deadline calculation to avoid overshooting
+      if (timeToAfford <= 15000) {
+        // Can check exactly when it's affordable
+        dynamicDeadline = timeToAfford;
+      } else {
+        // For longer waits, check at intervals that lead up to affordable time
+        // Calculate remainder after 15-second intervals
+        var remainder = timeToAfford % 15000;
+        if (remainder > 1000) {
+          // Check at the remainder time to align with affordable moment
+          // Example: 35s total -> check at 5s, then 15s, then 15s -> reaches 35s exactly
+          dynamicDeadline = remainder;
+        } else {
+          // Remainder is small, just use standard 15s interval
+          dynamicDeadline = 15000;
+        }
+      }
+
+      dynamicDeadline = Math.max(dynamicDeadline, 100); // Minimum 100ms to prevent thrashing
+    } else {
+      // Already affordable - check immediately
+      dynamicDeadline = 100;
+    }
+  }
+
+  AutoPlay.deadline=AutoPlay.now+dynamicDeadline;
+  AutoPlay.setDeadline(AutoPlay.now+(AutoPlay.now-Game.startDate)/10); // quick start
+  // Skip dashboard update if user has a menu open (prevents closing menus on mobile)
+  if (!Game.onMenu || Game.onMenu === '') {
+    AutoPlay.updateDashboard();
+  }
+
+  // run periodically (every 15 seconds)
+
   if (AutoPlay.Config.CheatLumps!=4) AutoPlay.handleSugarLumps();
   AutoPlay.handleSavings();
   AutoPlay.handleSeasons();
@@ -105,11 +158,13 @@ AutoPlay.run = function() {
   AutoPlay.handleAscend();
   AutoPlay.handleMinigames();
   AutoPlay.handleNotes();
-  // add some more hints what the bot is doing
-  if (!Game.HasAchiev('Elder')) AutoPlay.addActivity("Getting 7 grandma types");
-  if (Game.HasAchiev('Elder') && Game.Upgrades['Bingo center/Research facility'].unlocked &&
-      Game.ascensionMode!=1 && !Game.Upgrades['Bingo center/Research facility'].bought)
-    AutoPlay.addActivity("Funding the grandma research facility");
+  // add some more hints what the bot is doing (but only if not working on special achievements)
+  if (!AutoPlay.workingOnSpecialAchievement) {
+    if (!Game.HasAchiev('Elder')) AutoPlay.addActivity("Getting 7 grandma types");
+    if (Game.HasAchiev('Elder') && Game.Upgrades['Bingo center/Research facility'].unlocked &&
+        Game.ascensionMode!=1 && !Game.Upgrades['Bingo center/Research facility'].bought)
+      AutoPlay.addActivity("Funding the grandma research facility");
+  }
 }
 
 AutoPlay.runRightCount=0;
@@ -224,13 +279,46 @@ AutoPlay.handleGoldenCookies = function() { // pop first golden cookie or reinde
   for (var sx in Game.shimmers) {
     var s = Game.shimmers[sx];
     AutoPlay.hyperActive=true; // check whether full activity
-    if (s.force == "cookie storm drop" && AutoPlay.Config.GoldenClickMode==2) s.pop();
-    if (s.type!="golden" || s.life<Game.fps || !Game.Achievements["Early bird"].won) {
+    if (s.force == "cookie storm drop" && AutoPlay.Config.GoldenClickMode==2) {
       s.pop();
+      AutoPlay.logAction('Clicked cookie storm drop', s.type);
+    }
+    if (s.type!="golden" || s.life<Game.fps || !Game.Achievements["Early bird"].won) {
+      // Track cookies before clicking for Lucky/Lucky Frenzy bonus calculation
+      var cookiesBefore = Game.cookies;
+      s.pop();
+      var cookiesGained = Game.cookies - cookiesBefore;
+
+      // Check if this was a Lucky or Lucky Frenzy golden cookie
+      if (s.type === "golden" && cookiesGained > 0 && typeof Beautify !== 'undefined') {
+        var bonusType = s.force || 'shimmer';
+        // Lucky and Lucky Frenzy both have "lucky" in their force name
+        if (bonusType.toLowerCase().includes('lucky')) {
+          AutoPlay.logAction('Clicked ' + bonusType + ' golden cookie', '💰 +' + Beautify(cookiesGained) + ' cookies');
+          return;
+        }
+      }
+
+      AutoPlay.logAction('Clicked ' + s.type, s.force || 'shimmer');
       return;
     }
     if ((s.life/Game.fps)<(s.dur-2) && (Game.Achievements["Fading luck"].won)) {
+      // Track cookies before clicking for Lucky/Lucky Frenzy bonus calculation
+      var cookiesBefore = Game.cookies;
       s.pop();
+      var cookiesGained = Game.cookies - cookiesBefore;
+
+      // Check if this was a Lucky or Lucky Frenzy golden cookie
+      if (cookiesGained > 0 && typeof Beautify !== 'undefined') {
+        var bonusType = s.force || 'fading luck';
+        // Lucky and Lucky Frenzy both have "lucky" in their force name
+        if (bonusType.toLowerCase().includes('lucky')) {
+          AutoPlay.logAction('Clicked ' + bonusType + ' golden cookie', '💰 +' + Beautify(cookiesGained) + ' cookies');
+          return;
+        }
+      }
+
+      AutoPlay.logAction('Clicked golden cookie', s.force || 'fading luck');
       return;
     }
   }
@@ -309,14 +397,10 @@ AutoPlay.handleSavings = function() {
   }
   if (AutoPlay.Config.SavingStrategy == 2) {  // LUCKY
     AutoPlay.savingsGoal = Game.unbuffedCps * 60 * 100;
-    AutoPlay.addActivity('Saving to lucky (' +
-      Beautify(AutoPlay.savingsGoal) + ' cookies)');
     return;
   }
   if (AutoPlay.Config.SavingStrategy == 3) {  // LUCKY FRENZY
     AutoPlay.savingsGoal = Game.unbuffedCps * 60 * 100 * 7;
-    AutoPlay.addActivity('Saving to lucky frenzy (' +
-      Beautify(AutoPlay.savingsGoal) + ' cookies)');
     return;
   }
   // Auto: Save nothing for first 30 minutes, then linearly ramp up savings
@@ -326,11 +410,10 @@ AutoPlay.handleSavings = function() {
   const delayTime = 5 * 60 * 1000;  // wait before starting to save
   const targetTime = 400 * 60 * 1000;  // after start, time to target amount
   let elapsedTime = AutoPlay.now-AutoPlay.savingsStart - startTime;
-  let scaling = Math.min(elapsedTime / targetTime, 1);  //fraction of time to target
+  let scaling = Math.max(0, Math.min(elapsedTime / targetTime, 1));  //fraction of time to target
   if (elapsedTime < 0) {
     AutoPlay.savingsGoal = 0;
-    AutoPlay.addActivity('Not saving for first ' + (startTime / 60 / 1000) +
-          '+ minutes!');
+    AutoPlay.logStatus('reserve:startup', 'No reserve yet (startup period)');
     return;
   }
   if (Game.UpgradesById[52].bought && Game.UpgradesById[53].bought) {
@@ -338,7 +421,7 @@ AutoPlay.handleSavings = function() {
   }
   else {
     AutoPlay.savingsGoal = 0;
-    AutoPlay.addActivity('Not saving until golden cookie upgrades are purchased.');
+    AutoPlay.logStatus('reserve:waiting-upgrades', 'Waiting for golden cookie upgrades');
     return;
   }
   if (Game.UpgradesById[86].bought)  // get lucky
@@ -346,21 +429,19 @@ AutoPlay.handleSavings = function() {
   // scale goal between 0 and 1 based on elapsed time
   if (elapsedTime < targetTime) {
     AutoPlay.savingsGoal *= scaling;
-    AutoPlay.addActivity('Saving to ' + Beautify(AutoPlay.savingsGoal) +
-      ' cookies (' + (scaling * 100).toFixed(1) + '%)');
+    // Calculate actual savings progress (cookies saved vs goal)
+    var actualProgress = Math.min(100, (Game.cookies / AutoPlay.savingsGoal) * 100);
+    var progressPct = actualProgress.toFixed(0);
+    AutoPlay.logStatus('reserve:building-' + Math.floor(progressPct/10)*10, 'Reserve growing: ' + progressPct + '% saved');
   }
   else {
-    AutoPlay.addActivity('Saving to ' + Beautify(AutoPlay.savingsGoal) +
-      ' cookies');
-  }
-  if (AutoPlay.savingsGoal > Game.Objects["Cursor"].getPrice()) { // saving is too expensive
-    AutoPlay.savingsStart += delayTime; // delay saving
+    AutoPlay.logStatus('reserve:maintaining', 'Reserve at max');
   }
   let fractionSaved = Game.cookies / AutoPlay.savingsGoal;
   // if fallen behind savings plan, reset to current fraction
   // this happens if you stop the bot for a while or buy something with
   // a big payback
-  if (fractionSaved < 0.8) {
+  if (fractionSaved < 0.8 && scaling > 0) {
     AutoPlay.savingsStart = AutoPlay.now - startTime -
       targetTime * fractionSaved / scaling;  // fraction towards goal
   }
@@ -368,7 +449,9 @@ AutoPlay.handleSavings = function() {
 
 AutoPlay.buyBuilding = function(building, checkAmount=1, buyAmount=1) {
   if (building.getSumPrice(checkAmount) < Game.cookies - AutoPlay.savingsGoal) {
+    var price = building.getSumPrice(checkAmount);
     building.buy(buyAmount);
+    AutoPlay.logAction('Bought ' + building.name + (buyAmount > 1 ? ' x' + buyAmount : ''), Beautify(price) + ' cookies');
     AutoPlay.hyperActive=true; // might buy more soon
     return true;
   }
@@ -377,7 +460,9 @@ AutoPlay.buyBuilding = function(building, checkAmount=1, buyAmount=1) {
 
 AutoPlay.buyUpgrade = function(upgrade, bypass=true) {
   if (upgrade.getPrice() < Game.cookies - AutoPlay.savingsGoal) {
+    var price = upgrade.getPrice();
     upgrade.buy(bypass);
+    AutoPlay.logAction('Upgraded: ' + upgrade.name, Beautify(price) + ' cookies');
     AutoPlay.hyperActive=true;  // might buy more soon
   }
 }
@@ -386,14 +471,25 @@ AutoPlay.buyUpgrade = function(upgrade, bypass=true) {
 AutoPlay.bestBuy = function() {
   // if cookie monster isn't installed
   if (typeof CookieMonsterData == 'undefined') {
+    // Clear purchase tracking when CookieMonster isn't available
+    AutoPlay.nextPurchase = null;
+    AutoPlay.nextPurchaseType = null;
+    AutoPlay.nextPurchasePP = null;
+    AutoPlay.nextPurchasePrice = null;
     AutoPlay.handleBuildings();
     AutoPlay.handleUpgrades();
     return;
   }
 
   // this happens with cursed finger
-  if (AutoPlay.cpsMult == 0)
+  if (AutoPlay.cpsMult == 0) {
+    // Clear purchase tracking during cursed finger
+    AutoPlay.nextPurchase = null;
+    AutoPlay.nextPurchaseType = null;
+    AutoPlay.nextPurchasePP = null;
+    AutoPlay.nextPurchasePrice = null;
     return;
+  }
 
   // initialize with cursor, when cps = 0 all pp = inf
   let best = Game.ObjectsById[0].name;
@@ -487,6 +583,16 @@ AutoPlay.bestBuy = function() {
     }
   }
 
+  // Store best purchase info for dashboard
+  AutoPlay.nextPurchase = best;
+  AutoPlay.nextPurchaseType = type;
+  AutoPlay.nextPurchasePP = minpp;
+  if (type == 'building') {
+    AutoPlay.nextPurchasePrice = Game.Objects[best].getPrice();
+  } else {
+    AutoPlay.nextPurchasePrice = Game.Upgrades[best].getPrice();
+  }
+
   if (type == 'building') {
     if (AutoPlay.buyBuilding(Game.Objects[best], buy_amt, buy_amt)) haveBought=true;
   } else if (type == 'upgrade')
@@ -511,11 +617,23 @@ AutoPlay.bestBuy = function() {
 //===================== Handle Upgrades ==========================
 AutoPlay.handleUpgrades = function() {
   if (!Game.Achievements["Hardcore"].won && Game.UpgradesOwned==0) return;
-    for (var me in Game.UpgradesById) {
-        var e = Game.UpgradesById[me];
-        if (e.unlocked && !e.bought && !AutoPlay.avoidbuy(e))
-            AutoPlay.buyUpgrade(e, true);  // checks price, bypass = true
-    };
+
+  // Track best upgrade for dashboard
+  var bestUpgrade = null;
+  for (var me in Game.UpgradesById) {
+    var e = Game.UpgradesById[me];
+    if (e.unlocked && !e.bought && !AutoPlay.avoidbuy(e)) {
+      if (!bestUpgrade) {
+        bestUpgrade = e;
+        AutoPlay.nextPurchase = e.name;
+        AutoPlay.nextPurchaseType = 'upgrade';
+        AutoPlay.nextPurchasePrice = e.getPrice();
+        AutoPlay.nextPurchasePP = null; // No payback calculation without Cookie Monster
+      }
+      AutoPlay.buyUpgrade(e, true);  // checks price, bypass = true
+    }
+  }
+
   if (AutoPlay.canUseLumps && Game.Upgrades["Sugar frenzy"].unlocked &&
       !Game.Upgrades["Sugar frenzy"].bought &&
       (AutoPlay.now-Game.startDate) > 3*24*60*60*1000)
@@ -543,7 +661,10 @@ AutoPlay.avoidbuy = function(up) { //normally we do not buy 227, 71, ...
 //===================== Handle Buildings ==========================
 AutoPlay.handleBuildings = function() {
   var buyAmount = 100, checkAmount = 1;
-  if (Game.buyMode==-1) Game.storeBulkButton(0);
+  // Only change buy mode if necessary and no menu is open (prevents closing menus)
+  if (Game.buyMode==-1 && (!Game.onMenu || Game.onMenu === '')) {
+    Game.storeBulkButton(0);
+  }
   if ((AutoPlay.now-Game.startDate) > 10*60*1000) {
     buyAmount = 1; // buy single after 10 minutes
     var maxBuilding = Game.ObjectsById[Game.ObjectsById.length-1];
@@ -564,10 +685,20 @@ AutoPlay.handleBuildings = function() {
     var mycpc = me.storedCps / me.price;
     if (mycpc>cpc) cpc = mycpc;
   }
+
+  // Track best building for dashboard
+  var bestBuilding = null;
   for (var i = Game.ObjectsById.length-1; i>=0; i--) {
     var me = Game.ObjectsById[i];
     if (me.locked) continue;
     if (me.storedCps/me.price > cpc/2 || me.amount % 50 >= 40) {
+      if (!bestBuilding) {
+        bestBuilding = me;
+        AutoPlay.nextPurchase = me.name;
+        AutoPlay.nextPurchaseType = 'building';
+        AutoPlay.nextPurchasePrice = me.getPrice();
+        AutoPlay.nextPurchasePP = null; // No payback calculation without Cookie Monster
+      }
       //this checks price, sets deadline
       if (AutoPlay.buyBuilding(me, checkAmount, buyAmount)) return;
     }
@@ -594,7 +725,8 @@ AutoPlay.handleSeasons = function() {
     Game.UpgradeSanta();
     Game.ToggleSpecialMenu(0);
   }
-  if (Game.season == "christmas" && !Game.Achievements["Baby it\'s old outside"].won) {
+  // Skip Christmas elf achievement check if no grandmas bought yet (elf can't appear without grandmas)
+  if (Game.season == "christmas" && !Game.Achievements["Baby it\'s old outside"].won && Game.Objects["Grandma"].amount > 0) {
     if (Game.onMenu) Game.ShowMenu('');
     Game.Objects['Grandma'].canvas.parentElement.scrollIntoView()
     elfGrandmas = Game.Objects["Grandma"].pics.filter(function(p) { return p.pic=="elfGrandma.png"; });
@@ -1476,10 +1608,11 @@ AutoPlay.handleWrinklers = function() {
     AutoPlay.poppingWrinklers = true;
     AutoPlay.wrinklerTime = AutoPlay.now;
     AutoPlay.addActivity("Popping wrinklers for droppings and/or achievements.");
+    AutoPlay.logStatus('wrinkler', 'Popping all wrinklers');
     Game.wrinklers.forEach(function(w) { if (w.close==1) w.hp = 0; } );
   } else {
     if (!Game.Achievements['Wrinkler poker'].won && Game.wrinklers[3].close==1) {
-      Game.wrinklers[3].selected=1; 
+      Game.wrinklers[3].selected=1;
       l('backgroundLeftCanvas').click();
     }
     AutoPlay.findNextWrinkler();
@@ -1489,6 +1622,7 @@ AutoPlay.handleWrinklers = function() {
       if (AutoPlay.now-AutoPlay.wrinklerTime >= 2*60*60*1000) {
         Game.wrinklers[AutoPlay.nextWrinkler].hp = 0;  // pop
         AutoPlay.wrinklerTime = AutoPlay.now;
+        AutoPlay.logStatus('wrinkler', 'Popped single wrinkler');
       }
     }
   }
@@ -1620,27 +1754,60 @@ AutoPlay.redeemPresent = function() {
 AutoPlay.ascendLimit = 0.9*Math.floor(2*(1-Game.ascendMeterPercent));
 AutoPlay.wantAscend = false;
 AutoPlay.onAscend = false;
+AutoPlay.loggedAchievements = {}; // Track which achievements we've already logged
+
+// Check all achievements and log newly won ones
+AutoPlay.checkAchievements = function() {
+  for (var i in Game.Achievements) {
+    var achiev = Game.Achievements[i];
+    if (achiev.won && !AutoPlay.loggedAchievements[achiev.id]) {
+      // This achievement was just won
+      AutoPlay.loggedAchievements[achiev.id] = true;
+      AutoPlay.logAction('Achievement unlocked', achiev.name + ' - ' + achiev.ddesc.replace(/<q>.*?<\/q>/ig, ''));
+    }
+  }
+}
 
 AutoPlay.handleAscend = function() {
+  // Check for newly won achievements
+  AutoPlay.checkAchievements();
+
   if (Game.OnAscend) {
     AutoPlay.doReincarnate();
     AutoPlay.findNextAchievement();
     AutoPlay.setDeadline(0); // reactivate all activities
     AutoPlay.savingsStart = AutoPlay.now;
     AutoPlay.onAscend=false;
+    AutoPlay.loggedAchievements = {}; // Reset achievement tracking for new run
     return;
   }
   if (AutoPlay.onAscend && Game.AscendTimer==0) Game.Ascend(true);
   if (Game.ascensionMode == 0 && Game.prestige == 0)
     AutoPlay.canContinue();  // update achievement goals
   if (Game.AchievementsById[AutoPlay.nextAchievement].won) {
+    var achiev = Game.AchievementsById[AutoPlay.nextAchievement];
+    AutoPlay.logStatus('achievement', 'Unlocked: ' + achiev.name);
+
+    // Check if this is first ascension and if we should wait for 365+ prestige
+    var isFirstRun = (Game.prestige == 0);
+    var currentPrestige = Game.ascendMeterLevel;
+    var isHardcoreAchievement = (achiev.id == Game.Achievements["Hardcore"].id ||
+                                  achiev.id == Game.Achievements["Neverclick"].id ||
+                                  achiev.id == Game.Achievements["True Neverclick"].id);
+
+    if (isFirstRun && currentPrestige < 365 && !isHardcoreAchievement) {
+      // Don't ascend yet - need to reach 365+ prestige for first ascension
+      AutoPlay.logStatus('prestige', 'Waiting for 365+ prestige before first ascension (currently ' + Math.floor(currentPrestige) + ')');
+      return;
+    }
+
     var date = new Date();
     date.setTime(AutoPlay.now-Game.startDate);
     var legacyTime = Game.sayTime(date.getTime()/1000*Game.fps,-1);
     date.setTime(AutoPlay.now-Game.fullDate);
     var fullTime=Game.sayTime(date.getTime()/1000*Game.fps,-1);
     AutoPlay.doAscend("have achievement: " +
-      Game.AchievementsById[AutoPlay.nextAchievement].ddesc.replace(/<q>.*?<\/q>/ig, '') +
+      achiev.ddesc.replace(/<q>.*?<\/q>/ig, '') +
       " after " + legacyTime + "(total: " + fullTime + ")",1);
     return;
   }
@@ -1728,8 +1895,15 @@ AutoPlay.neverclickWarn=true;
 
 AutoPlay.canContinue = function() {
   var needAchievement = false;
-  if (!Game.Achievements["True Neverclick"].won && Game.cookieClicks==0) {
-    AutoPlay.addActivity("Trying to get achievement: True Neverclick.");
+  var targetActivity = '';
+  AutoPlay.workingOnSpecialAchievement = false; // Clear flag by default
+
+  // Check if Hardcore/Neverclick mode is enabled (AUTO = 1, SKIP = 0)
+  var shouldAttemptHardcore = AutoPlay.Config.HardcoreMode === 1;
+
+  if (shouldAttemptHardcore && !Game.Achievements["True Neverclick"].won && Game.cookieClicks==0) {
+    var achiev = Game.Achievements["True Neverclick"];
+    targetActivity = "Trying to get achievement: " + achiev.name + " - " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '');
     if (AutoPlay.neverclickWarn)
 	  Game.Prompt('<h3>Attention</h3><div class="block">'+
       '<p>Cookie Bot is trying to get the true neverclick achievement.</p>'+
@@ -1738,34 +1912,51 @@ AutoPlay.canContinue = function() {
     AutoPlay.neverclickWarn=false;
     needAchievement = true;
   }
-  if (!Game.Achievements["Neverclick"].won && Game.cookieClicks<=15) {
-    AutoPlay.addActivity("Trying to get achievement: Neverclick.");
+  else if (shouldAttemptHardcore && !Game.Achievements["Neverclick"].won && Game.cookieClicks<=15) {
+    var achiev = Game.Achievements["Neverclick"];
+    targetActivity = "Trying to get achievement: " + achiev.name + " - " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '');
     needAchievement = true;
   }
-  if (!Game.Achievements["Hardcore"].won && Game.UpgradesOwned==0) {
-    AutoPlay.addActivity("Trying to get achievement: Hardcore.");
+  else if (shouldAttemptHardcore && !Game.Achievements["Hardcore"].won && Game.UpgradesOwned==0) {
+    var achiev = Game.Achievements["Hardcore"];
+    targetActivity = "Trying to get achievement: " + achiev.name + " - " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '');
     needAchievement = true;
   }
-  if (needAchievement) return true;
+
+  if (needAchievement) {
+    // Only update if the goal changed
+    if (AutoPlay.mainActivity !== targetActivity) {
+      AutoPlay.setMainActivity(targetActivity);
+      AutoPlay.activities = targetActivity; // Also update activities to match
+    }
+    AutoPlay.workingOnSpecialAchievement = true; // Flag to skip adding extra activity hints
+    return true;
+  }
 
   if (!Game.Achievements["Speed baking I"].won &&
             (AutoPlay.now-Game.startDate <= 1000*60*35)) {
-    AutoPlay.addActivity("Trying to get achievement: Speed baking I.");
-    AutoPlay.addActivity("Trying to get achievement: Speed baking II.");
-    AutoPlay.addActivity("Trying to get achievement: Speed baking III.");
+    var achiev = Game.Achievements["Speed baking I"];
+    targetActivity = "Trying to get achievement: " + achiev.name + " - " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '');
   } else if (!Game.Achievements["Speed baking II"].won &&
             (AutoPlay.now-Game.startDate <= 1000*60*25)) {
-    AutoPlay.addActivity("Trying to get achievement: Speed baking II.");
-    AutoPlay.addActivity("Trying to get achievement: Speed baking III.");
+    var achiev = Game.Achievements["Speed baking II"];
+    targetActivity = "Trying to get achievement: " + achiev.name + " - " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '');
     for (var i = 1; i<3; i++) // threefold clicking speed
       setTimeout(function(){Game.ClickCookie(0, Game.computedMouseCps);}, 60*i);
   } else if (!Game.Achievements["Speed baking III"].won &&
             (AutoPlay.now-Game.startDate <= 1000*60*15)) {
-    AutoPlay.addActivity("Trying to get achievement: Speed baking III.");
+    var achiev = Game.Achievements["Speed baking III"];
+    targetActivity = "Trying to get achievement: " + achiev.name + " - " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '');
     for (var i = 1; i<5; i++) // fivefold clicking speed
       setTimeout(function(){Game.ClickCookie(0, Game.computedMouseCps);}, 30*i);
   } else return false;
 
+  // Only update if the goal changed
+  if (AutoPlay.mainActivity !== targetActivity) {
+    AutoPlay.setMainActivity(targetActivity);
+    AutoPlay.activities = targetActivity; // Also update activities to match
+  }
+  AutoPlay.workingOnSpecialAchievement = true; // Flag to skip adding extra activity hints
   AutoPlay.hyperActive=true; // full activity for speed baking
   return true;
 }
@@ -1793,6 +1984,7 @@ AutoPlay.mustRebornAscend = function() {
 AutoPlay.doAscend = function(str,log) {
   if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
   if (AutoPlay.onAscend || Game.OnAscend) return;
+  AutoPlay.logStatus('ascend', str);
   AutoPlay.wantAscend = AutoPlay.plantPending /*|| AutoPlay.harvestPlant*/;
   AutoPlay.addActivity("Preparing to ascend.");
   if (AutoPlay.wantAscend) return; // do not ascend when we wait for a plant
@@ -1823,6 +2015,14 @@ AutoPlay.doAscend = function(str,log) {
     AutoPlay.delay = 10;
   } else {
     AutoPlay.info(str); AutoPlay.loggingInfo=log?str:0;
+    // Log prestige gain
+    var prestigeGain = Game.ascendMeterLevel;
+    var newPrestige = Game.prestige + prestigeGain;
+    if (typeof Beautify !== 'undefined' && prestigeGain > 0) {
+      AutoPlay.logAction('Ascending', str + ' | Prestige: ' + Beautify(Game.prestige) + ' → ' + Beautify(newPrestige) + ' (+' + Beautify(prestigeGain) + ')');
+    } else {
+      AutoPlay.logAction('Ascending', str);
+    }
     AutoPlay.logging(); AutoPlay.delay=15; Game.Ascend(true);
     AutoPlay.onAscend=true;
   }
@@ -1861,6 +2061,9 @@ AutoPlay.activities = AutoPlay.mainActivity;
 AutoPlay.setMainActivity = function(str) {
   AutoPlay.mainActivity = str;
   AutoPlay.info(str);
+  // Only log as status, not action (goal changes are status updates, not actions)
+  // This prevents duplicate entries in the combined activity feed
+  AutoPlay.logStatus('goal', 'Target: ' + str);
 }
 
 AutoPlay.findNextAchievement = function() {
@@ -1932,18 +2135,26 @@ AutoPlay.leaveGame = function() {
 
 //===================== Handle Heavenly Upgrades ==========================
 AutoPlay.buyHeavenlyUpgrades = function() {
+  var upgradesPurchased = [];
   AutoPlay.prioUpgrades.forEach(function(id) {
     var e = Game.UpgradesById[id];
     if (e.canBePurchased && !e.bought && e.buy(true)) {
       AutoPlay.info("buying "+e.name);
+      upgradesPurchased.push(e.name);
     }
   });
   for (var me in Game.UpgradesById) {
       var e = Game.UpgradesById[me];
       if (e.canBePurchased && !e.bought && e.buy(true)) {
           AutoPlay.info("buying " + e.name);
+          upgradesPurchased.push(e.name);
       }
   };
+
+  // Log all purchased heavenly upgrades
+  if (upgradesPurchased.length > 0) {
+    AutoPlay.logAction('Purchased heavenly upgrades', upgradesPurchased.join(', '));
+  }
   AutoPlay.assignPermanentSlot(1,AutoPlay.kittens);
   AutoPlay.assignPermanentSlot(2,AutoPlay.maxBuildings);
   if (!Game.Achievements["Reincarnation"].won) { // for many ascends
@@ -2006,12 +2217,17 @@ AutoPlay.handleDragon = function() {
   if (Game.dragonAura!=wantedAura) {
     Game.specialTab = "dragon"; Game.SetDragonAura(wantedAura,0);
     Game.ConfirmPrompt(); Game.ToggleSpecialMenu(0);
+    var auraNames = ['', 'Breath of Milk', 'Dragon Cursor', 'Elder Battalion', 'Reaper of Fields', 'Dragonflight', 'Ancestral Metamorphosis', 'Unholy Dominion', 'Fierce Hoarder', 'Dragon God', 'Arcane Aura', 'Fierce Hoarder', 'Dragon Orb', 'Radiant Appetite', 'Dragon\'s Curve'];
+    if (wantedAura < auraNames.length) {
+      AutoPlay.logStatus('dragon', 'Dragon aura 1: ' + auraNames[wantedAura]);
+    }
   }
   if ((Game.dragonAura2!=1) &&
       (Game.dragonLevel>=Game.dragonLevels.length-1)) {
   // set second aura to kitten (breath of milk)
     Game.specialTab = "dragon"; Game.SetDragonAura(1,1);
     Game.ConfirmPrompt(); Game.ToggleSpecialMenu(0);
+    AutoPlay.logStatus('dragon', 'Dragon aura 2: Breath of Milk');
 } }
 
 AutoPlay.checkDragon = function(building) {
@@ -2123,12 +2339,16 @@ AutoPlay.ConfigData.CheatLumps =
   {label: ['OFF', 'AUTO', 'LITTLE', 'MEDIUM', 'MUCH'], desc: 'Cheating of sugar lumps'};
 AutoPlay.ConfigData.CheatGolden =
   {label: ['OFF', 'AUTO', 'LITTLE', 'MEDIUM', 'MUCH'], desc: 'Cheating of golden cookies'};
+AutoPlay.ConfigData.ShowDashboard =
+  {label: ['HIDE', 'SHOW'], desc: 'Toggle dashboard visibility'};
+AutoPlay.ConfigData.HardcoreMode =
+  {label: ['SKIP', 'AUTO'], desc: 'Hardcore/Neverclick achievements: SKIP (ignore them) or AUTO (attempt on first run)'};
 AutoPlay.ConfigData.CleanLog = {label: ['Clean Log'], desc: 'Cleaning the log'};
 AutoPlay.ConfigData.ShowLog = {label: ['Show Log'], desc: 'Showing the log'};
 
 AutoPlay.ConfigDefault = {BotMode: 1, NightMode: 1, ClickMode: 1, GoldenClickMode: 1,
                           SavingStrategy: 1, CheatLumps: 1, CheatGolden: 1,
-                          CleanLog: 0, ShowLog: 0};
+                          ShowDashboard: 1, HardcoreMode: 1, CleanLog: 0, ShowLog: 0};
 
 AutoPlay.LoadConfig();
 
@@ -2173,9 +2393,12 @@ AutoPlay.Disp.AddMenuPref = function() {
   frag.appendChild(listing('ClickMode',null));
   frag.appendChild(listing('GoldenClickMode',null));
   frag.appendChild(listing('SavingStrategy',null));
+  frag.appendChild(listing('HardcoreMode',null));
   frag.appendChild(header('Cheating'));
   frag.appendChild(listing('CheatLumps',null));
   frag.appendChild(listing('CheatGolden',null));
+  frag.appendChild(header('Display'));
+  frag.appendChild(listing('ShowDashboard',AutoPlay.toggleDashboardConfig));
   frag.appendChild(header('Logging'));
   frag.appendChild(listing('CleanLog',AutoPlay.cleanLog));
   frag.appendChild(listing('ShowLog',AutoPlay.showLog));
@@ -2187,7 +2410,9 @@ if (!AutoPlay.Backup.UpdateMenu) AutoPlay.Backup.UpdateMenu = Game.UpdateMenu;
 
 AutoPlay.setBotMode = function() {
   AutoPlay.ToggleConfig('BotMode');
-  AutoPlay.info("The bot has changed mode to "+AutoPlay.ConfigData.BotMode.label[AutoPlay.Config.BotMode]);
+  var modeName = AutoPlay.ConfigData.BotMode.label[AutoPlay.Config.BotMode];
+  AutoPlay.info("The bot has changed mode to " + modeName);
+  AutoPlay.logStatus('mode', 'Mode: ' + modeName);
 //  AutoPlay.info("The bot has changed mode to "+AutoPlay.ConfigData.BotMode[]);
 }
 
@@ -2196,10 +2421,655 @@ Game.UpdateMenu = function() {
   if (Game.onMenu == 'prefs') AutoPlay.Disp.AddMenuPref();
 }
 
+//===================== Dashboard ==========================
+
+AutoPlay.createDashboard = function() {
+  // Create container
+  var dashboard = document.createElement('div');
+  dashboard.id = 'cookieBotDashboard';
+
+  // Create header with toggle button
+  var header = document.createElement('div');
+  header.style.cssText = 'padding: 8px 16px; background: rgba(0, 100, 0, 0.3); cursor: pointer; display: flex; justify-content: space-between; align-items: center;';
+  header.innerHTML = '<span style="color: #6f6; font-size: 14px; font-weight: bold;">CookieBot Dashboard</span><span id="dashboardToggle" style="color: #6f6; font-size: 12px;">▼ Collapse</span>';
+
+  // Create content area
+  var content = document.createElement('div');
+  content.id = 'dashboardContent';
+  content.style.cssText = 'display: flex; padding: 12px; gap: 16px; max-height: 250px; overflow-y: auto;';
+
+  // Three columns: Stats & Reserve | Next Actions | Recent Activity
+  content.innerHTML = '<div id="dashProgress" style="flex: 1; min-width: 250px;"><div style="color: #6f6; font-size: 13px; margin-bottom: 8px; font-weight: bold;">Stats & Reserve</div><div id="dashProgressContent" style="color: #fff; font-size: 11px; line-height: 1.5;">Loading...</div></div><div id="dashNextActions" style="flex: 1; min-width: 250px;"><div style="color: #6f6; font-size: 13px; margin-bottom: 8px; font-weight: bold;">Next Actions</div><div id="dashNextContent" style="color: #fff; font-size: 11px; line-height: 1.5; max-height: 200px; overflow-y: auto;">Loading...</div></div><div id="dashActivity" style="flex: 1; min-width: 250px;"><div style="color: #6f6; font-size: 13px; margin-bottom: 8px; font-weight: bold;">Recent Activity</div><div id="dashActivityContent" style="color: #fff; font-size: 11px; line-height: 1.4; max-height: 200px; overflow-y: auto;">No activity yet...</div></div>';
+
+  // Add toggle functionality
+  header.onclick = AutoPlay.toggleDashboard;
+
+  dashboard.appendChild(header);
+  dashboard.appendChild(content);
+
+  // Append to wrapper element
+  var wrapper = document.getElementById('wrapper');
+  if (wrapper) {
+    wrapper.appendChild(dashboard);
+  } else {
+    document.body.appendChild(dashboard);
+  }
+
+  // Calculate bottom offset based on other bottom bars
+  // Defer initial positioning to ensure DOM is fully settled
+  setTimeout(function() {
+    AutoPlay.positionDashboard();
+  }, 100);
+
+  // Watch for new elements being added to wrapper (like Cookie Monster loading later)
+  if (wrapper && typeof MutationObserver !== 'undefined') {
+    AutoPlay.dashboardObserver = new MutationObserver(function(mutations) {
+      // Debounce to avoid multiple rapid calls
+      clearTimeout(AutoPlay.positionTimeout);
+      AutoPlay.positionTimeout = setTimeout(function() {
+        AutoPlay.positionDashboard();
+      }, 50);
+    });
+    AutoPlay.dashboardObserver.observe(wrapper, { childList: true });
+  }
+
+  // Apply config setting for visibility
+  if (AutoPlay.Config.ShowDashboard == 0) {
+    dashboard.style.display = 'none';
+  }
+}
+
+AutoPlay.positionDashboard = function() {
+  var dashboard = document.getElementById('cookieBotDashboard');
+  if (!dashboard) return;
+
+  var wrapper = document.getElementById('wrapper');
+  if (!wrapper) return;
+
+  // Find all other bottom-positioned elements in the wrapper
+  var bottomOffset = 0;
+  var children = wrapper.children;
+
+  for (var i = 0; i < children.length; i++) {
+    var child = children[i];
+    if (child.id !== 'cookieBotDashboard') {
+      var style = window.getComputedStyle(child);
+      // Check if element is absolutely positioned at the bottom
+      if (style.position === 'absolute' && style.bottom === '0px') {
+        var height = child.offsetHeight;
+        if (height > 0) {
+          bottomOffset += height;
+
+          // Watch this element for size changes
+          if (typeof ResizeObserver !== 'undefined' && !child.hasAttribute('data-cookiebot-watched')) {
+            child.setAttribute('data-cookiebot-watched', 'true');
+            if (!AutoPlay.resizeObserver) {
+              AutoPlay.resizeObserver = new ResizeObserver(function() {
+                AutoPlay.positionDashboard();
+              });
+            }
+            AutoPlay.resizeObserver.observe(child);
+          }
+        }
+      }
+    }
+  }
+
+  // Apply positioning without wiping other styles
+  dashboard.style.position = 'absolute';
+  dashboard.style.bottom = bottomOffset + 'px';
+  dashboard.style.left = '0';
+  dashboard.style.right = '0';
+  dashboard.style.background = 'rgba(0, 0, 0, 0.9)';
+  dashboard.style.borderTop = '2px solid #6f6';
+  dashboard.style.zIndex = '10000';
+
+  // Temporarily ensure dashboard is visible to measure height accurately
+  var wasHidden = dashboard.style.display === 'none';
+  if (wasHidden) {
+    dashboard.style.display = 'block';
+  }
+
+  // Force reflow to ensure accurate measurement
+  void dashboard.offsetHeight;
+
+  // Get dashboard height (includes header + content if expanded, or just header if collapsed)
+  var dashboardHeight = dashboard.offsetHeight;
+
+  // Update #game div's bottom to account for all bottom bars including ours
+  var game = document.getElementById('game');
+  if (game) {
+    var totalBottomHeight = bottomOffset + dashboardHeight;
+    game.style.bottom = totalBottomHeight + 'px';
+  }
+
+  // Hide dashboard if config says to
+  if (AutoPlay.Config.ShowDashboard == 0) {
+    dashboard.style.display = 'none';
+  }
+}
+
+AutoPlay.toggleDashboard = function() {
+  var content = document.getElementById('dashboardContent');
+  var toggle = document.getElementById('dashboardToggle');
+
+  AutoPlay.dashboardCollapsed = !AutoPlay.dashboardCollapsed;
+
+  if (AutoPlay.dashboardCollapsed) {
+    content.style.display = 'none';
+    toggle.textContent = '▲ Expand';
+  } else {
+    content.style.display = 'flex';
+    toggle.textContent = '▼ Collapse';
+  }
+
+  // Reposition to account for height change
+  setTimeout(function() {
+    AutoPlay.positionDashboard();
+  }, 0);
+}
+
+AutoPlay.toggleDashboardConfig = function() {
+  AutoPlay.ToggleConfig('ShowDashboard');
+  var dashboard = document.getElementById('cookieBotDashboard');
+  if (dashboard) {
+    dashboard.style.display = AutoPlay.Config.ShowDashboard ? 'block' : 'none';
+    // Reposition to update game div's bottom
+    setTimeout(function() {
+      AutoPlay.positionDashboard();
+    }, 0);
+  }
+}
+
+AutoPlay.updateDashboard = function() {
+  if (!document.getElementById('cookieBotDashboard')) return;
+
+  try {
+    // Update Next Actions
+    var nextHtml = '';
+
+    // Show next purchase
+    if (AutoPlay.nextPurchase && typeof Beautify !== 'undefined') {
+      var purchaseColor = AutoPlay.nextPurchaseType === 'building' ? '#6f6' : '#fc6';
+      nextHtml += '<div style="margin-bottom: 12px; padding: 10px; background: rgba(0,200,0,0.08); border: 2px solid ' + purchaseColor + '; border-radius: 4px;" title="The next item the bot plans to purchase based on efficiency calculations">';
+      nextHtml += '<div style="color: ' + purchaseColor + '; font-weight: bold; font-size: 13px; margin-bottom: 6px;">';
+      nextHtml += (AutoPlay.nextPurchaseType === 'building' ? '🏢 ' : '⬆️ ') + AutoPlay.nextPurchase;
+      nextHtml += '</div>';
+      nextHtml += '<div style="color: #ccc; font-size: 11px; margin-bottom: 4px;">Cost: ' + Beautify(AutoPlay.nextPurchasePrice) + '</div>';
+
+      // Calculate available cookies (total - savings reserve)
+      var availableCookies = Game.cookies - (AutoPlay.savingsGoal || 0);
+      var needsForPurchase = AutoPlay.nextPurchasePrice - availableCookies;
+
+      if (needsForPurchase > 0) {
+        // Not enough cookies after reserves
+        var timeToAfford = needsForPurchase / Game.cookiesPs;
+        var timeUntilCheck = Math.max(0, (AutoPlay.deadline - AutoPlay.now) / 1000);
+        nextHtml += '<div style="color: #f96; font-size: 11px; margin-top: 4px; font-weight: bold;" title="Time until you can afford this purchase (calculated by dividing cookies needed by your CPS)">⏳ Time left: ' + (timeToAfford < 60 ? timeToAfford.toFixed(1) + 's' : (timeToAfford < 3600 ? (timeToAfford/60).toFixed(1) + 'm' : (timeToAfford/3600).toFixed(1) + 'h')) + '</div>';
+        nextHtml += '<div style="color: #888; font-size: 10px;">Need ' + Beautify(needsForPurchase) + ' more cookies';
+        if (AutoPlay.savingsGoal > 0) {
+          nextHtml += ' <span title="The bot keeps a reserve of cookies for Lucky and Lucky Frenzy golden cookie bonuses. This amount is not available for purchases.">(after ' + Beautify(AutoPlay.savingsGoal) + ' reserve)</span>';
+        }
+        nextHtml += '</div>';
+        // Show when bot will check
+        if (timeUntilCheck < timeToAfford) {
+          nextHtml += '<div style="color: #6f6; font-size: 9px; margin-top: 2px;">⚡ Auto-check in ' + timeUntilCheck.toFixed(1) + 's</div>';
+        }
+      } else if (AutoPlay.nextPurchasePrice > Game.cookies) {
+        // Can't afford at all (even without reserves)
+        var timeToAfford = (AutoPlay.nextPurchasePrice - Game.cookies) / Game.cookiesPs;
+        var timeUntilCheck = Math.max(0, (AutoPlay.deadline - AutoPlay.now) / 1000);
+        nextHtml += '<div style="color: #f96; font-size: 11px; margin-top: 4px; font-weight: bold;" title="Time until you can afford this purchase (calculated by dividing cookies needed by your CPS)">⏳ Time left: ' + (timeToAfford < 60 ? timeToAfford.toFixed(1) + 's' : (timeToAfford < 3600 ? (timeToAfford/60).toFixed(1) + 'm' : (timeToAfford/3600).toFixed(1) + 'h')) + '</div>';
+        nextHtml += '<div style="color: #888; font-size: 10px;">Need ' + Beautify(AutoPlay.nextPurchasePrice - Game.cookies) + ' more cookies</div>';
+        // Show when bot will check
+        if (timeUntilCheck < timeToAfford) {
+          nextHtml += '<div style="color: #6f6; font-size: 9px; margin-top: 2px;">⚡ Auto-check in ' + timeUntilCheck.toFixed(1) + 's</div>';
+        }
+      } else {
+        // Can afford now!
+        nextHtml += '<div style="color: #6f6; font-size: 11px; margin-top: 4px; font-weight: bold;">✓ Ready to buy!</div>';
+        if (AutoPlay.hyperActive) {
+          nextHtml += '<div style="color: #6f6; font-size: 10px;">🚀 High activity mode - buying immediately</div>';
+        } else {
+          var timeUntilCheck = Math.max(0, (AutoPlay.deadline - AutoPlay.now) / 1000);
+          if (timeUntilCheck < 1) {
+            nextHtml += '<div style="color: #6f6; font-size: 10px;">⚡ Buying in < 1s</div>';
+          } else {
+            nextHtml += '<div style="color: #888; font-size: 10px;">Next check in ' + timeUntilCheck.toFixed(1) + 's</div>';
+          }
+        }
+      }
+
+      if (AutoPlay.nextPurchasePP !== undefined && AutoPlay.nextPurchasePP !== null && AutoPlay.nextPurchasePP < Infinity) {
+        nextHtml += '<div style="color: #888; font-size: 9px; margin-top: 4px;" title="How long it will take for this purchase to pay for itself through increased CPS (shorter is better)">Payback: ' + (AutoPlay.nextPurchasePP < 60 ? AutoPlay.nextPurchasePP.toFixed(1) + 's' : (AutoPlay.nextPurchasePP < 3600 ? (AutoPlay.nextPurchasePP/60).toFixed(1) + 'm' : (AutoPlay.nextPurchasePP/3600).toFixed(1) + 'h')) + '</div>';
+      }
+
+      // Show if using fallback logic (no Cookie Monster)
+      if (typeof CookieMonsterData === 'undefined') {
+        nextHtml += '<div style="color: #888; font-size: 9px; margin-top: 4px; font-style: italic;" title="Cookie Monster mod provides better purchase calculations. Without it, the bot uses simpler logic that may not always be optimal.">Using simple buying logic (Cookie Monster not installed)</div>';
+      }
+      nextHtml += '</div>';
+    } else {
+      nextHtml += '<div style="color: #888; font-size: 11px; margin-bottom: 12px;">No purchase planned yet...</div>';
+    }
+
+    // Show main activity/goal in styled box
+    if (AutoPlay.mainActivity) {
+      var goalColor = '#9cf';
+      var goalIcon = '🎯';
+
+      // Determine icon based on activity type
+      if (AutoPlay.mainActivity.toLowerCase().indexOf('achievement') !== -1) {
+        goalIcon = '🏆';
+        goalColor = '#fc6';
+      } else if (AutoPlay.mainActivity.toLowerCase().indexOf('ascend') !== -1) {
+        goalIcon = '⬆️';
+        goalColor = '#f9f';
+      }
+
+      nextHtml += '<div style="margin-bottom: 12px; padding: 8px; background: rgba(0,200,200,0.08); border: 2px solid ' + goalColor + '; border-radius: 4px;" title="Current bot objective">';
+      nextHtml += '<div style="color: ' + goalColor + '; font-weight: bold; font-size: 11px; margin-bottom: 4px;">';
+      nextHtml += goalIcon + ' Current Goal';
+      nextHtml += '</div>';
+      nextHtml += '<div style="color: #ccc; font-size: 10px; line-height: 1.3;">' + AutoPlay.mainActivity + '</div>';
+      nextHtml += '</div>';
+    }
+
+    // Show additional activities in styled box if present (filter out status info)
+    if (AutoPlay.activities && AutoPlay.activities !== AutoPlay.mainActivity) {
+      var extraActivities = AutoPlay.activities.replace(AutoPlay.mainActivity, '').replace(/<div class="line"><\/div>/g, '');
+      // Filter out "Missing X achievements" text - it's now in Stats & Reserve
+      if (extraActivities.indexOf('Missing') !== -1 && extraActivities.indexOf('achievements') !== -1) {
+        extraActivities = '';
+      }
+      if (extraActivities.trim()) {
+        nextHtml += '<div style="margin-bottom: 12px; padding: 10px; background: rgba(100,100,100,0.08); border: 2px solid #888; border-radius: 4px;" title="Additional bot activities">';
+        nextHtml += '<div style="color: #888; font-weight: bold; font-size: 11px; margin-bottom: 4px;">';
+        nextHtml += 'ℹ️ Additional Info';
+        nextHtml += '</div>';
+        nextHtml += '<div style="color: #aaa; font-size: 10px; line-height: 1.4;">' + extraActivities + '</div>';
+        nextHtml += '</div>';
+      }
+    }
+
+    document.getElementById('dashNextContent').innerHTML = nextHtml || 'Initializing...';
+
+    // Update Progress
+    var progressHtml = '';
+
+    // Savings progress bar (golden cookie reserve)
+    // Show reserve info even when not actively saving (e.g., during Hardcore mode)
+    if (typeof Beautify !== 'undefined' && Game.unbuffedCps > 0) {
+      // Calculate base thresholds (without time scaling)
+      var baseLucky = Game.unbuffedCps * 60 * 100; // 6000 seconds of CPS
+      var baseLuckyFrenzy = baseLucky * 7; // 42000 seconds of CPS
+      var hasGetLucky = Game.UpgradesById[86] && Game.UpgradesById[86].bought;
+
+      // Check if we're actively saving or just showing info
+      var isSavingActive = AutoPlay.savingsGoal > 0;
+      var reserveStatus = isSavingActive ? '🍪 Golden Cookie Reserve' : '🍪 Golden Cookie Info (Reserve Disabled)';
+      var reserveTooltip = isSavingActive
+        ? 'The bot keeps a reserve of cookies to maximize Lucky and Lucky Frenzy golden cookie bonuses. This amount is unavailable for purchases.'
+        : 'Golden cookie thresholds shown for reference. Reserve is disabled during special achievements like Hardcore.';
+
+      progressHtml += '<div style="margin-bottom: 8px;">';
+      progressHtml += '<div style="color: #fc6; font-size: 11px; font-weight: bold; margin-bottom: 6px;" title="' + reserveTooltip + '">' + reserveStatus + '</div>';
+
+      // Show why reserve is not active (if applicable)
+      if (!isSavingActive) {
+        // Check if in startup period
+        const startTime = 30 * 60 * 1000;
+        if (AutoPlay.savingsStart !== undefined && AutoPlay.now) {
+          var elapsedTime = AutoPlay.now - AutoPlay.savingsStart - startTime;
+          if (elapsedTime < 0) {
+            var minutesRemaining = Math.ceil(Math.abs(elapsedTime) / 60 / 1000);
+            progressHtml += '<div style="font-size: 10px; color: #fc6; font-weight: bold; margin-bottom: 4px; padding: 4px; background: rgba(255,200,100,0.1); border-left: 3px solid #fc6;">⏱ Reserve Disabled: Startup Period</div>';
+            progressHtml += '<div style="font-size: 9px; color: #ccc; margin-bottom: 4px; margin-left: 4px;">Reserve will activate in ' + minutesRemaining + ' minute' + (minutesRemaining !== 1 ? 's' : '') + ' (30-minute startup delay)</div>';
+          } else if (Game.ascensionMode == 1) {
+            progressHtml += '<div style="font-size: 10px; color: #9cf; font-weight: bold; margin-bottom: 4px; padding: 4px; background: rgba(150,200,255,0.1); border-left: 3px solid #9cf;">🏆 Reserve Disabled: Hardcore Mode</div>';
+            progressHtml += '<div style="font-size: 9px; color: #ccc; margin-bottom: 4px; margin-left: 4px;">All cookies are available for purchases during Hardcore achievement</div>';
+          } else if (!Game.UpgradesById[52].bought || !Game.UpgradesById[53].bought) {
+            var missingUpgrades = [];
+            if (!Game.UpgradesById[52].bought) missingUpgrades.push('Lucky day');
+            if (!Game.UpgradesById[53].bought) missingUpgrades.push('Serendipity');
+            progressHtml += '<div style="font-size: 10px; color: #fc6; font-weight: bold; margin-bottom: 4px; padding: 4px; background: rgba(255,200,100,0.1); border-left: 3px solid #fc6;">⏳ Reserve Disabled: Missing Upgrades</div>';
+            progressHtml += '<div style="font-size: 9px; color: #ccc; margin-bottom: 4px; margin-left: 4px;">Need golden cookie upgrades: ' + missingUpgrades.join(', ') + '</div>';
+          }
+        }
+      }
+
+      // Calculate actual target with time scaling
+      var scaling = 1;
+      if (isSavingActive && AutoPlay.savingsStart !== undefined && AutoPlay.now && Game.startDate) {
+        const startTime = 30 * 60 * 1000;
+        const targetTime = 400 * 60 * 1000;
+        var elapsedTime = AutoPlay.now - AutoPlay.savingsStart - startTime;
+        scaling = Math.max(0, Math.min(elapsedTime / targetTime, 1));
+
+        if (scaling < 1) {
+          progressHtml += '<div style="font-size: 9px; color: #888; margin-bottom: 4px;" title="The reserve target gradually increases over 400 minutes after a 30-minute startup period. This prevents the bot from over-saving early in the run.">⏱ Target ramping up: ' + (scaling * 100).toFixed(1) + '% (full at ' + (targetTime/60000).toFixed(0) + ' min)</div>';
+        }
+      }
+
+      var targetLucky = baseLucky * scaling;
+      var targetLuckyFrenzy = baseLuckyFrenzy * scaling;
+
+      // Lucky progress
+      var luckyPercent = Math.min(100, (Game.cookies / targetLucky) * 100);
+      var luckyColor = Game.cookies >= targetLucky ? '#6f6' : '#fc6';
+      progressHtml += '<div style="margin-bottom: 6px;">';
+      progressHtml += '<div style="font-size: 10px; color: ' + luckyColor + ';" title="Reserve for Lucky golden cookie bonus (7x your cookies). Requires ' + Beautify(targetLucky) + ' cookies.">';
+      progressHtml += (Game.cookies >= targetLucky ? '✓ ' : '○ ') + 'Lucky: ' + Beautify(targetLucky);
+      progressHtml += '</div>';
+      if (Game.cookies < targetLucky) {
+        progressHtml += '<div style="background: #333; height: 8px; border: 1px solid #666; margin-top: 2px;"><div style="background: linear-gradient(to right, #fc6, #f90); height: 100%; width: ' + luckyPercent + '%;"></div></div>';
+        progressHtml += '<div style="font-size: 9px; color: #888; margin-top: 1px;">' + Beautify(Game.cookies) + ' / ' + Beautify(targetLucky) + ' (' + luckyPercent.toFixed(1) + '%)</div>';
+      }
+      progressHtml += '</div>';
+
+      // Lucky Frenzy progress (only if Get Lucky upgrade is bought)
+      if (hasGetLucky) {
+        var luckyFrenzyPercent = Math.min(100, (Game.cookies / targetLuckyFrenzy) * 100);
+        var luckyFrenzyColor = Game.cookies >= targetLuckyFrenzy ? '#6f6' : '#fc6';
+        progressHtml += '<div style="margin-bottom: 6px;">';
+        progressHtml += '<div style="font-size: 10px; color: ' + luckyFrenzyColor + ';" title="Reserve for Lucky Frenzy golden cookie bonus (777x your cookies). Requires Get Lucky upgrade and ' + Beautify(targetLuckyFrenzy) + ' cookies.">';
+        progressHtml += (Game.cookies >= targetLuckyFrenzy ? '✓ ' : '○ ') + 'Lucky Frenzy: ' + Beautify(targetLuckyFrenzy);
+        progressHtml += '</div>';
+        if (Game.cookies < targetLuckyFrenzy) {
+          progressHtml += '<div style="background: #333; height: 8px; border: 1px solid #666; margin-top: 2px;"><div style="background: linear-gradient(to right, #f96, #f66); height: 100%; width: ' + luckyFrenzyPercent + '%;"></div></div>';
+          progressHtml += '<div style="font-size: 9px; color: #888; margin-top: 1px;">' + Beautify(Game.cookies) + ' / ' + Beautify(targetLuckyFrenzy) + ' (' + luckyFrenzyPercent.toFixed(1) + '%)</div>';
+        }
+        progressHtml += '</div>';
+      } else {
+        progressHtml += '<div style="font-size: 9px; color: #666; font-style: italic; margin-bottom: 6px;" title="Purchase the Get Lucky upgrade to unlock Lucky Frenzy bonuses (777x cookies).">○ Lucky Frenzy: Locked (need Get Lucky upgrade)</div>';
+      }
+
+      progressHtml += '</div>';
+    }
+
+    // Achievement progress (for "bake X cookies" achievements and special achievements)
+    if (AutoPlay.nextAchievement && typeof Beautify !== 'undefined' && Game.AchievementsById) {
+      var achiev = Game.AchievementsById[AutoPlay.nextAchievement];
+      // List of all "bake X cookies" achievement IDs
+      var bakingAchievements = [225, 227, 229, 279, 280, 372, 373, 374, 375, 390, 391, 429, 451, 452, 453, 470, 471, 472, 534, 535, 536, 578, 579, 586, 587, 592, 593];
+
+      // Check for special achievements - check both by ID and by description/name
+      var isHardcore = false;
+      var isNeverclick = false;
+      var isTrueNeverclick = false;
+
+      if (achiev) {
+        // Check by name in the description
+        var achievDesc = (achiev.ddesc || '').toLowerCase();
+        var achievName = (achiev.name || '').toLowerCase();
+
+        if (achievName.indexOf('hardcore') !== -1 || achievDesc.indexOf('1 billion') !== -1) {
+          isHardcore = true;
+        } else if (achievName.indexOf('true neverclick') !== -1) {
+          isTrueNeverclick = true;
+        } else if (achievName.indexOf('neverclick') !== -1) {
+          isNeverclick = true;
+        }
+
+        // Also check by ID if we can
+        if (Game.Achievements["Hardcore"] && achiev.id === Game.Achievements["Hardcore"].id) isHardcore = true;
+        if (Game.Achievements["Neverclick"] && achiev.id === Game.Achievements["Neverclick"].id) isNeverclick = true;
+        if (Game.Achievements["True Neverclick"] && achiev.id === Game.Achievements["True Neverclick"].id) isTrueNeverclick = true;
+      }
+
+      var isSpecialAchievement = isHardcore || isNeverclick || isTrueNeverclick;
+
+      // Also check if we're working on a special achievement
+      if (!isSpecialAchievement && AutoPlay.workingOnSpecialAchievement && achiev) {
+        // Fallback check based on activity text
+        var activityText = (AutoPlay.mainActivity || '').toLowerCase();
+        if (activityText.indexOf('hardcore') !== -1) isHardcore = true;
+        if (activityText.indexOf('true neverclick') !== -1) isTrueNeverclick = true;
+        if (activityText.indexOf('neverclick') !== -1 && activityText.indexOf('true') === -1) isNeverclick = true;
+        isSpecialAchievement = isHardcore || isNeverclick || isTrueNeverclick;
+      }
+
+      if (achiev && (bakingAchievements.indexOf(achiev.id) !== -1 || isSpecialAchievement)) {
+        // This is a trackable achievement - show progress
+        var cookieThreshold;
+        var currentCookies = Game.cookiesEarned;
+
+        // Set thresholds for special achievements
+        if (isHardcore) {
+          cookieThreshold = 1000000000; // 1 billion
+        } else if (isNeverclick || isTrueNeverclick) {
+          cookieThreshold = 1000000; // 1 million
+        } else {
+          cookieThreshold = achiev.threshold;
+        }
+
+        if (cookieThreshold && cookieThreshold > 0) {
+          var progressPercent = Math.min(100, (currentCookies / cookieThreshold) * 100);
+          var remaining = Math.max(0, cookieThreshold - currentCookies);
+
+          progressHtml += '<div style="margin-bottom: 8px; margin-top: 8px;">';
+          progressHtml += '<div style="color: #6f6; font-size: 11px; font-weight: bold; margin-bottom: 6px;" title="Progress toward next achievement">🎯 Achievement Progress</div>';
+          progressHtml += '<div style="font-size: 10px; color: #ccc; margin-bottom: 4px;">' + achiev.name + '</div>';
+
+          // Show special requirements for Hardcore/Neverclick achievements
+          if (isSpecialAchievement) {
+            if (isHardcore) {
+              var upgradesStatus = Game.UpgradesOwned === 0 ? '✓' : '✗';
+              var upgradesColor = Game.UpgradesOwned === 0 ? '#6f6' : '#f66';
+              progressHtml += '<div style="font-size: 9px; color: ' + upgradesColor + '; margin-bottom: 2px;">' + upgradesStatus + ' No upgrades purchased (' + Game.UpgradesOwned + ' owned)</div>';
+            } else if (isTrueNeverclick) {
+              var clicksStatus = Game.cookieClicks === 0 ? '✓' : '✗';
+              var clicksColor = Game.cookieClicks === 0 ? '#6f6' : '#f66';
+              progressHtml += '<div style="font-size: 9px; color: ' + clicksColor + '; margin-bottom: 2px;">' + clicksStatus + ' No cookie clicks (' + Game.cookieClicks + ' clicks)</div>';
+            } else if (isNeverclick) {
+              var clicksStatus = Game.cookieClicks <= 15 ? '✓' : '✗';
+              var clicksColor = Game.cookieClicks <= 15 ? '#6f6' : '#f66';
+              progressHtml += '<div style="font-size: 9px; color: ' + clicksColor + '; margin-bottom: 2px;">' + clicksStatus + ' Max 15 cookie clicks (' + Game.cookieClicks + '/15 used)</div>';
+            }
+          }
+
+          // Progress bar
+          var barColor = progressPercent < 50 ? '#f66' : (progressPercent < 80 ? '#fc6' : '#6f6');
+          progressHtml += '<div style="background: #333; height: 12px; border: 1px solid #666; margin-top: 4px; margin-bottom: 2px;"><div style="background: linear-gradient(to right, ' + barColor + ', ' + (progressPercent < 50 ? '#f90' : (progressPercent < 80 ? '#6f6' : '#0f0')) + '); height: 100%; width: ' + progressPercent + '%;"></div></div>';
+          progressHtml += '<div style="font-size: 9px; color: #aaa;">' + Beautify(currentCookies) + ' / ' + Beautify(cookieThreshold) + ' (' + progressPercent.toFixed(1) + '%)</div>';
+
+          // Time estimate
+          if (remaining > 0 && Game.cookiesPs > 0) {
+            var timeRemaining = remaining / Game.cookiesPs;
+            var timeStr = '';
+            if (timeRemaining < 60) {
+              timeStr = timeRemaining.toFixed(0) + ' seconds';
+            } else if (timeRemaining < 3600) {
+              timeStr = (timeRemaining / 60).toFixed(1) + ' minutes';
+            } else if (timeRemaining < 86400) {
+              timeStr = (timeRemaining / 3600).toFixed(1) + ' hours';
+            } else {
+              timeStr = (timeRemaining / 86400).toFixed(1) + ' days';
+            }
+            progressHtml += '<div style="font-size: 9px; color: #fc6; margin-top: 2px;" title="Estimated time to reach this achievement based on current CPS">⏱ Est. time: ' + timeStr + '</div>';
+          } else if (remaining === 0) {
+            // Check if special requirements are met
+            var requirementsMet = true;
+            if (isHardcore && Game.UpgradesOwned !== 0) requirementsMet = false;
+            if (isTrueNeverclick && Game.cookieClicks !== 0) requirementsMet = false;
+            if (isNeverclick && Game.cookieClicks > 15) requirementsMet = false;
+
+            if (requirementsMet) {
+              progressHtml += '<div style="font-size: 9px; color: #6f6; margin-top: 2px; font-weight: bold;">✓ Ready to unlock!</div>';
+            } else {
+              progressHtml += '<div style="font-size: 9px; color: #f66; margin-top: 2px; font-weight: bold;">✗ Requirements not met</div>';
+            }
+          }
+
+          progressHtml += '</div>';
+        }
+      }
+    }
+
+    // Time in run
+    if (AutoPlay.now && Game.startDate && typeof Game.sayTime !== 'undefined') {
+      var timeInRun = AutoPlay.now - Game.startDate;
+      progressHtml += '<div style="font-size: 10px; color: #aaa;" title="Total time elapsed since the start of this game run">Time in run: ' + Game.sayTime(timeInRun/1000*Game.fps, -1) + '</div>';
+    }
+
+    // CPS
+    if (typeof Beautify !== 'undefined' && Game.cookiesPs !== undefined) {
+      progressHtml += '<div style="font-size: 10px; color: #aaa;" title="Current cookies per second production rate. The multiplier includes buffs from golden cookies, frenzies, etc.">CPS: ' + Beautify(Game.cookiesPs) + ' (' + (AutoPlay.cpsMult ? AutoPlay.cpsMult.toFixed(1) : '1.0') + 'x multiplier)</div>';
+    }
+
+    // Buildings and Upgrades
+    if (Game.BuildingsOwned !== undefined && Game.UpgradesOwned !== undefined) {
+      progressHtml += '<div style="font-size: 10px; color: #aaa;" title="Total number of buildings and upgrades you currently own">Buildings: ' + Game.BuildingsOwned + ' | Upgrades: ' + Game.UpgradesOwned + '</div>';
+    }
+
+    // Prestige
+    if (Game.prestige !== undefined && typeof Beautify !== 'undefined') {
+      var nextPrestige = Game.HowMuchPrestige(Game.cookiesReset + Game.cookiesEarned);
+      var prestigeGain = Math.floor(nextPrestige - Game.prestige);
+      if (prestigeGain > 0) {
+        progressHtml += '<div style="font-size: 10px; color: #aaa;" title="Current prestige level. Ascending now would give you additional prestige levels, which permanently increase your CPS.">Prestige: ' + Beautify(Game.prestige) + ' (+' + Beautify(prestigeGain) + ' on ascend)</div>';
+      } else {
+        progressHtml += '<div style="font-size: 10px; color: #aaa;" title="Current prestige level. Prestige permanently increases your CPS.">Prestige: ' + Beautify(Game.prestige) + '</div>';
+      }
+    }
+
+    // Active buffs
+    if (Game.buffs) {
+      var activeBuffs = [];
+      for (var buff in Game.buffs) {
+        if (Game.buffs[buff].time > 0) {
+          var buffName = Game.buffs[buff].type.name;
+          var timeLeft = Math.ceil(Game.buffs[buff].time / Game.fps);
+          activeBuffs.push(buffName + ' (' + timeLeft + 's)');
+        }
+      }
+      if (activeBuffs.length > 0) {
+        progressHtml += '<div style="font-size: 10px; color: #fc6; margin-top: 4px;" title="Currently active temporary buffs from golden cookies, frenzies, and other bonuses">✨ ' + activeBuffs.join(', ') + '</div>';
+      }
+    }
+
+    // Completion status
+    if (AutoPlay.statusInfo) {
+      progressHtml += '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #444;">';
+      progressHtml += '<div style="font-size: 10px; color: #888; font-weight: bold; margin-bottom: 2px;">Progress to Completion</div>';
+      if (AutoPlay.statusInfo.achievements > 0) {
+        progressHtml += '<div style="font-size: 9px; color: #aaa;">🏆 ' + AutoPlay.statusInfo.achievements + ' achievements remaining';
+        if (AutoPlay.statusInfo.shadowAchievements > 0) {
+          progressHtml += ' (' + AutoPlay.statusInfo.shadowAchievements + ' shadow)';
+        }
+        progressHtml += '</div>';
+      }
+      if (AutoPlay.statusInfo.upgrades > 0) {
+        progressHtml += '<div style="font-size: 9px; color: #aaa;">⬆️ ' + AutoPlay.statusInfo.upgrades + ' upgrades remaining</div>';
+      }
+      if (AutoPlay.statusInfo.lumps > 0) {
+        progressHtml += '<div style="font-size: 9px; color: #aaa;">🍬 ' + AutoPlay.statusInfo.lumps + ' sugar lumps needed</div>';
+      }
+      if (AutoPlay.statusInfo.achievements === 0 && AutoPlay.statusInfo.upgrades === 0 && AutoPlay.statusInfo.lumps === 0) {
+        progressHtml += '<div style="font-size: 9px; color: #6f6;">✓ All content completed!</div>';
+      }
+      progressHtml += '</div>';
+    }
+
+    document.getElementById('dashProgressContent').innerHTML = progressHtml || 'No active goals';
+
+    // Update Combined Activity Feed (status + actions)
+    var activityHtml = '';
+    var combinedActivity = [];
+
+    // Add status entries
+    if (AutoPlay.statusHistory && AutoPlay.statusHistory.length > 0) {
+      AutoPlay.statusHistory.forEach(function(entry) {
+        var baseType = entry.type.split(':')[0];
+        var color = '#ccc';
+        var icon = '📊';
+        var tooltip = '';
+
+        if (baseType === 'goal') {
+          color = '#fc6'; icon = '🎯';
+          tooltip = 'Bot\'s current goal or target (e.g., achievement, ascension, or upgrade milestone)';
+        }
+        else if (baseType === 'reserve') {
+          color = '#f96'; icon = '🍪';
+          tooltip = 'Golden cookie reserve status - the bot keeps cookies saved for Lucky/Lucky Frenzy bonuses';
+        }
+        else if (baseType === 'achievement') {
+          color = '#f66'; icon = '🏆';
+          tooltip = 'Achievement-related status update';
+        }
+        else if (baseType === 'mode') {
+          color = '#6f6'; icon = '⚙️';
+          tooltip = 'Bot mode or behavior change';
+        }
+        else if (baseType === 'ascend') {
+          color = '#f6f'; icon = '⬆️';
+          tooltip = 'Ascension-related status update';
+        }
+        else if (baseType === 'dragon') {
+          color = '#c9f'; icon = '🐉';
+          tooltip = 'Dragon aura change or update';
+        }
+        else if (baseType === 'wrinkler') {
+          color = '#a8a'; icon = '🪱';
+          tooltip = 'Wrinkler management status';
+        }
+
+        combinedActivity.push({
+          time: entry.time,
+          type: 'status',
+          color: color,
+          icon: icon,
+          tooltip: tooltip,
+          message: entry.message,
+          details: entry.details
+        });
+      });
+    }
+
+    // Add action entries
+    if (AutoPlay.actionHistory && AutoPlay.actionHistory.length > 0) {
+      AutoPlay.actionHistory.forEach(function(entry) {
+        var color = '#ccc';
+        var icon = '⚡';
+        if (entry.action.includes('Bought') || entry.action.includes('Upgraded')) { color = '#6f6'; icon = '🛒'; }
+        if (entry.action.includes('Clicked')) { color = '#fc6'; icon = '👆'; }
+        if (entry.action.includes('Ascend') || entry.action.includes('Achievement')) { color = '#f66'; icon = '🏆'; }
+
+        combinedActivity.push({
+          time: entry.time,
+          type: 'action',
+          color: color,
+          icon: icon,
+          tooltip: 'Action performed by the bot',
+          message: entry.action,
+          details: entry.details
+        });
+      });
+    }
+
+    // Sort by time (newest first)
+    combinedActivity.sort(function(a, b) {
+      return b.time - a.time;
+    });
+
+    // Generate HTML
+    if (combinedActivity.length > 0) {
+      combinedActivity.forEach(function(entry) {
+        var timeStr = entry.time.toLocaleTimeString();
+        activityHtml += '<div style="margin-bottom: 4px; padding: 4px; background: rgba(255,255,255,0.05); border-left: 2px solid ' + entry.color + ';" title="' + entry.tooltip + '"><span style="color: #888; font-size: 9px;">' + timeStr + '</span> <span style="color: ' + entry.color + ';">' + entry.icon + ' ' + entry.message + '</span>' + (entry.details ? ' <span style="color: #aaa; font-size: 10px;"> - ' + entry.details + '</span>' : '') + '</div>';
+      });
+    } else {
+      activityHtml = '<div style="color: #888;">No activity yet...</div>';
+    }
+    document.getElementById('dashActivityContent').innerHTML = activityHtml;
+  } catch (e) {
+    console.log('Dashboard update error:', e);
+  }
+}
+
 //===================== Auxiliary ==========================
 
 AutoPlay.info = function(s) {
-  console.log("### "+s);
   Game.Notify("CookieBot",s,1,100);
   AutoPlay.debugLogging("### "+s)
 }
@@ -2246,7 +3116,13 @@ AutoPlay.status = function(print=true) { // just for testing purposes
   }
   lum-=Game.lumps;
   if (lum<0) lum=0;
-  AutoPlay.addActivity("Missing "+(ach)+" achievements ("+sach+" shadow), "+up+" upgrades, and "+lum+" sugar lumps.");
+  // Store status info for dashboard display instead of adding to activities
+  AutoPlay.statusInfo = {
+    achievements: ach,
+    shadowAchievements: sach,
+    upgrades: up,
+    lumps: lum
+  };
 }
 
 AutoPlay.setDeadline = function(d) {
@@ -2314,6 +3190,52 @@ AutoPlay.addActivity = function(str) {
   } else return false;
 }
 
+AutoPlay.logAction = function(action, details) {
+  try {
+    var timestamp = new Date();
+    var entry = {
+      time: timestamp,
+      action: action,
+      details: details || ''
+    };
+
+    AutoPlay.actionHistory.unshift(entry); // Add to beginning
+    if (AutoPlay.actionHistory.length > AutoPlay.maxHistorySize) {
+      AutoPlay.actionHistory.pop(); // Remove oldest
+    }
+
+    AutoPlay.updateDashboard(); // Refresh display
+  } catch (e) {
+    console.log('Log action error:', e);
+  }
+}
+
+AutoPlay.logStatus = function(statusType, message, details) {
+  try {
+    // Only log if status changed
+    var statusKey = statusType + ':' + message;
+    if (AutoPlay.lastStatus[statusType] === statusKey) return;
+    AutoPlay.lastStatus[statusType] = statusKey;
+
+    var timestamp = new Date();
+    var entry = {
+      time: timestamp,
+      type: statusType, // 'goal', 'reserve', 'mode', 'achievement', etc.
+      message: message,
+      details: details || ''
+    };
+
+    AutoPlay.statusHistory.unshift(entry); // Add to beginning
+    if (AutoPlay.statusHistory.length > AutoPlay.maxHistorySize) {
+      AutoPlay.statusHistory.pop(); // Remove oldest
+    }
+
+    AutoPlay.updateDashboard(); // Refresh display
+  } catch (e) {
+    console.log('Log status error:', e);
+  }
+}
+
 //===================== Init & Start ==========================
 AutoPlay.launchCount = 0;
 AutoPlay.launch = function() {
@@ -2342,6 +3264,13 @@ AutoPlay.launch = function() {
   if (Game.version!=AutoPlay.gameVersion)
     AutoPlay.info("Warning: cookieBot is last tested with "+
       "cookie clicker version " + AutoPlay.gameVersion);
+  AutoPlay.createDashboard();
+  AutoPlay.updateDashboard();
+
+  // Update dashboard every second for real-time stats
+  setInterval(function() {
+    AutoPlay.updateDashboard();
+  }, 1000);
 }
 
 AutoPlay.launch();
