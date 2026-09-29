@@ -1,5 +1,15 @@
 # Cookie Bot Frequently Asked Questions
 
+## Maintained fork and install channels
+
+The maintained fork is [`lbr88-labs/CookieBot`](https://github.com/lbr88-labs/CookieBot), originally created by [Prinz Stani](https://github.com/prinzstani). Current bug reports and contributions for this fork should go to its [issues and pull requests](https://github.com/lbr88-labs/CookieBot).
+
+The maintained beta browser bookmarklet uses [`cookieAutoPlayBeta.js`](https://lbr88-labs.github.io/CookieBot/cookieAutoPlayBeta.js), and the beta Steam package uses the same monolith. The root beta `CookieBot.user.js` now uses canonical Pages URLs for `@updateURL`, `@downloadURL`, and `Game.LoadMod`; this URL correction has no browser runtime or save validation, and the root beta userscript has no stable designation. The separate experimental [TypeScript userscript](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js) is version `2.052-127` and pins a versioned bundle instead of `latest`; its metadata and bundle request also use canonical Pages URLs. It has no browser runtime or save validation and no stable designation. Use only one supported channel at a time.
+
+Before trying another channel, export a backup and use a disposable save or profile. Stop or disable the current channel and reload before installing another. The legacy beta and experimental TypeScript channels have overlapping configuration paths (`autoplayConfig` and `CookieBot_Config`) with unproven parity; do not assume settings migrate between them. No save migration is documented or claimed.
+
+The older stable bookmarklet and `CookieBot4Steam.zip` remain legacy paths to upstream's `cookieAutoPlay.js` loader and historical RawGit delivery. They are not maintained fork beta downloads and are not redirected to beta.
+
 ## General Questions
 
 ### The bot is not doing anything - what is wrong?
@@ -25,13 +35,13 @@ First, you might want to create an issue about the problem, in particular if the
 If you have mixed up the bot strategy because you bought something which the bot would not have bought, you should ascend and let the bot run without interference.
 
 ### How do I ask a question about the bot?
-First, you want to carefully check this FAQ and the [README](https://github.com/prinzstani/CookieBot/blob/master/README.md). If you request is related to a bug or suggestion, please [**create it as an issue**](https://github.com/prinzstani/CookieBot/issues) for easier tracking. This allows to follow the status of the issue. If none of this is applicable, send your question to theprinzstani@gmail.com.
+First, carefully check this FAQ and the [README](README.md). For a bug report or suggestion about the maintained fork, [create an issue in `lbr88-labs/CookieBot`](https://github.com/lbr88-labs/CookieBot/issues) so its status can be tracked. Include the game and bot version, selected channel, reproduction steps, and expected versus observed behavior. Do not include private save data in a public report.
 
 ### The bot does not support the current version of cookie clicker - what can I do?
-Relax. The bot will still work, it only does not handle all of the new features. Make sure that there is [an issue](https://github.com/prinzstani/CookieBot/issues) about the new version. Enjoy the bot as usual.
+Relax. The bot may still work but might not handle all new features. Check for or open an issue in the [maintained fork](https://github.com/lbr88-labs/CookieBot/issues) describing the game version and affected behavior.
 
 ### How can I contribute?
-The bot needs regular maintenance, in particular when there is a new version of cookie clicker. If you are interested in contributing, please contact theprinzstani@gmail.com.
+The bot needs regular maintenance, especially when Cookie Clicker changes. Contributions to this fork can be proposed as a pull request to [`lbr88-labs/CookieBot`](https://github.com/lbr88-labs/CookieBot).
 
 ## Saving Strategy
 The bot will maintain a bank of cookies to try and maximize profits from

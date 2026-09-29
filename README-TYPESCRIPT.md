@@ -1,114 +1,54 @@
-# CookieBot TypeScript Migration
+# CookieBot TypeScript Experiment
 
-This document explains the new TypeScript modular structure for CookieBot.
+This is a separate experimental browser channel in the maintained `lbr88-labs/CookieBot` fork. Its Pages base is `https://lbr88-labs.github.io/CookieBot/`. It is not the root beta monolith or root beta userscript, and this document does not announce a release. The root beta userscript's update/download metadata and `Game.LoadMod` now use the canonical Pages URLs, but it has no browser runtime or save validation and no stable designation.
 
-## Project Structure
+At the checked-in version `2.052-127`, the experimental userscript file is [`dist/CookieBot.user.js`](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js). It is intended to load the pinned `dist/cookieAutoPlayBeta-v2.052-127.js` bundle; it does not use the `latest` alias. The checked-in generated file and its generator now use canonical Pages URLs for update/download metadata and the pinned bundle request. This URL correction has no browser runtime or save validation, and the TypeScript userscript remains experimental with no stable designation. Existing users should manually install or replace it from [`https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js`](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js): the old `lbr88.github.io` `@updateURL` may return 404, and a userscript manager may skip this URL-only correction because the version is unchanged.
+
+## Project structure
 
 ```
 CookieBot/
-├── src/                          # TypeScript source code
-│   ├── modules/                  # Modular components
-│   │   ├── GoldenCookieHandler.ts    # Golden cookies & shimmers
-│   │   ├── SavingsManager.ts         # Cookie reserves (Lucky, etc.)
-│   │   ├── BuildingManager.ts        # Building purchases
-│   │   ├── UpgradeManager.ts         # Upgrade purchases
-│   │   ├── SeasonHandler.ts          # Seasonal events
-│   │   ├── SugarLumpManager.ts       # Sugar lump management
-│   │   ├── WrinklerManager.ts        # Wrinkler strategy
-│   │   ├── AchievementHandler.ts     # Achievement hunting
-│   │   ├── AscensionManager.ts       # Ascension decisions
-│   │   ├── DragonManager.ts          # Dragon auras
-│   │   ├── Dashboard.ts              # UI dashboard
-│   │   └── NightMode.ts              # Night mode styling
-│   ├── types/                    # TypeScript type definitions
-│   │   ├── cookieclicker.d.ts        # Cookie Clicker game types
-│   │   └── autoplay.d.ts             # AutoPlay types
-│   ├── utils/                    # Utility functions
-│   │   └── helpers.ts                # Shared helper functions
-│   ├── AutoPlay.ts               # Main AutoPlay class
+├── src/                          # TypeScript source
+│   ├── modules/                  # Browser/game behavior modules
+│   ├── types/                    # Cookie Clicker and bot types
+│   ├── utils/                    # Shared helpers
+│   ├── AutoPlay.ts               # Main orchestrator
 │   └── index.ts                  # Entry point
-├── dist/                         # Compiled JavaScript (generated)
-├── cookieAutoPlayBeta.js         # Original file (kept for reference)
-├── CookieBot.user.js             # Userscript loader
-├── package.json                  # NPM dependencies
-├── tsconfig.json                 # TypeScript configuration
-└── webpack.config.js             # Build configuration
+├── dist/                         # Generated TypeScript bundles/userscript
+│   ├── cookieAutoPlayBeta-v{version}.js
+│   ├── cookieAutoPlayBeta-latest.js
+│   └── CookieBot.user.js             # Experimental TypeScript userscript
+├── cookieAutoPlayBeta.js         # Separate beta monolith
+├── CookieBot.user.js             # Separate root beta userscript; embedded URLs use canonical Pages host
+├── package.json
+├── tsconfig.json
+└── webpack.config.js
 ```
 
-## Module Responsibilities
+The TypeScript implementation contains modules for golden cookies, savings, purchases, seasons, garden, stock market, sugar lumps, wrinklers, achievements, ascension, dragon auras, dashboard, and night mode. `AutoPlay` coordinates those modules. The TypeScript channel remains experimental; no feature parity with the beta monolith is claimed.
 
-### Core Modules
-
-- **GoldenCookieHandler**: Handles clicking golden cookies, reindeer, and other shimmers
-- **SavingsManager**: Manages cookie reserves (Lucky: 100min CPS, Lucky Frenzy: 700min CPS)
-- **BuildingManager**: Decides which buildings to buy using PP/ROI strategy
-- **UpgradeManager**: Handles upgrade purchases and priority
-- **SeasonHandler**: Manages seasonal events (Christmas, Easter, etc.) and cycling
-- **SugarLumpManager**: Harvests and spends sugar lumps automatically
-- **WrinklerManager**: Pops wrinklers based on value calculation
-- **AchievementHandler**: Hunts for achievements (clicking, special conditions)
-- **AscensionManager**: Decides when to ascend and manages heavenly upgrades
-- **DragonManager**: Trains dragon and selects optimal auras
-- **Dashboard**: Renders the UI dashboard showing stats and controls
-- **NightMode**: Applies dark mode styling
-
-### Supporting
-
-- **AutoPlay**: Main orchestrator class that coordinates all modules
-- **types/**: TypeScript definitions for Cookie Clicker and AutoPlay state
-- **utils/**: Shared utility functions (formatting, calculations, etc.)
-
-## Development
-
-### Install Dependencies
+## Build commands
 
 ```bash
 npm install
-```
 
-### Build for Production
+# Generate dist/CookieBot.user.js from the current package version without a version bump
+node scripts/build-userscript.js
 
-```bash
+# Versioning build: run version bump, compile a versioned bundle, update latest alias,
+# and regenerate the TypeScript userscript
 npm run build
+
+npm run dev          # watch build
+npm run type-check   # TypeScript checking only
 ```
 
-This compiles TypeScript and bundles into `dist/cookieAutoPlayBeta.js`
+`node scripts/build-userscript.js` rewrites only `dist/CookieBot.user.js` and reads the current version from `package.json`. It does not compile the TypeScript bundle and does not bump the version. `npm run build` runs the change-detection version step first, then webpack, the latest-copy step, and userscript generation. The version step increments the numeric suffix when tracked source changes are detected.
 
-### Development Mode (Watch)
+Webpack emits `dist/cookieAutoPlayBeta-v{version}.js`. `scripts/post-build.js` copies that file to `dist/cookieAutoPlayBeta-latest.js`. The generated `dist/CookieBot.user.js` pins the matching versioned bundle, so it does not follow the `latest` alias. In this candidate, the root beta and experimental TypeScript userscripts both use canonical Pages URLs; neither has browser runtime or save validation or a stable designation. Keep the root beta monolith, root beta userscript, and experimental TypeScript userscript as separate channels, and install only one supported channel at a time.
 
-```bash
-npm run dev
-```
+## Save and configuration caution
 
-Watches for file changes and rebuilds automatically.
+Before trying this experiment, export a save backup and use a disposable save or profile. The legacy beta and experimental TypeScript paths overlap in configuration keys (`autoplayConfig` and `CookieBot_Config`), but their settings parity has not been established. Do not assume configuration or save migration between channels.
 
-### Type Checking Only
-
-```bash
-npm run type-check
-```
-
-Runs TypeScript compiler without emitting files.
-
-## Migration Strategy
-
-The original `cookieAutoPlayBeta.js` is preserved. The TypeScript version will be built incrementally:
-
-1. ✅ Set up project structure
-2. ✅ Create module skeletons
-3. ⏳ Migrate each section to its respective module
-4. ⏳ Test each module as it's migrated
-5. ⏳ Full integration testing
-6. ⏳ Replace original file once stable
-
-## Benefits of TypeScript
-
-- **Type Safety**: Catch errors at compile-time instead of runtime
-- **Better IDE Support**: Autocomplete, refactoring, go-to-definition
-- **Modular Architecture**: Each concern is separated into its own module
-- **Maintainability**: Easier to understand, modify, and extend
-- **Documentation**: Types serve as inline documentation
-
-## Next Steps
-
-Start migrating code section by section from `cookieAutoPlayBeta.js` to the respective TypeScript modules.
+The older `cookieAutoPlay.js` and `CookieBot4Steam.zip` are legacy stable delivery paths. They remain tied to the upstream release loader and its historical RawGit path; they are not part of the TypeScript build or beta channel.
