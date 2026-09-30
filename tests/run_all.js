@@ -41,10 +41,13 @@ const runScript = (scriptName, label) => {
     // 3. Shipped beta monolith ascension ownership and loader regressions
     await runScript('test:ascension-ownership', 'Beta Monolith Ascension Ownership');
 
-    // 4. E2E Smoke Test (Medium)
+    // 4. Experimental TypeScript userscript bundle manual ascension ownership regression
+    await runScript('test:typescript-ascension-ownership', 'Experimental TypeScript Bundle Ascension Ownership');
+
+    // 5. E2E Smoke Test (Medium)
     await runScript('test:e2e', 'E2E Smoke Test');
 
-    // 5. Bot Decision Tests (Integration)
+    // 6. Bot Decision Tests (Integration)
     await runScript('test:saves', 'Bot Decision Tests');
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);

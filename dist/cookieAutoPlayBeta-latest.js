@@ -4901,6 +4901,9 @@ class AscensionManager {
      * Checks achievements, prestige levels, and decides when to ascend
      */
     handleAscend() {
+        // A manually opened ascend screen remains player-owned until the player reincarnates.
+        if (Game.OnAscend && !this.context.onAscend)
+            return;
         // Each pass reevaluates whether an ascension decision is still pending.
         this.pendingAscension = null;
         // Check for newly won achievements
