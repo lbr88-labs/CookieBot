@@ -14,6 +14,7 @@ interface AscensionState {
 export declare class AscensionManager {
     private state;
     private context;
+    private pendingAscension;
     constructor(context: AutoPlayContext);
     /**
      * Safely confirm a prompt, handling cases where the game loop might be paused
@@ -86,6 +87,7 @@ export declare class AscensionManager {
      * Get current ascension manager status
      */
     getStatus(): ModuleStatus;
+    private getLiveAscensionWaitBlocker;
 }
 export {};
 //# sourceMappingURL=AscensionManager.d.ts.map

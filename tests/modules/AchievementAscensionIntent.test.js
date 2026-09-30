@@ -396,7 +396,7 @@ function testAutoPlayDelegatesIntentAccessToManager() {
   const AutoPlay = compileModule(autoplayPath, () => ({}), {}, {}).default;
   const autoplay = Object.create(AutoPlay.prototype);
   autoplay.ascensionManager = fakeManager;
-  assert.strictEqual(AutoPlay.version, '2.052-129');
+  assert.strictEqual(AutoPlay.version, '2.052-130');
   assert.deepStrictEqual(autoplay.getAchievementAscensionIntent(),
     { version: 1, state: 'due', targetId: TARGET_ID });
   assert.deepStrictEqual(autoplay.armAchievementAscensionIntent(NEXT_TARGET_ID),
@@ -412,4 +412,4 @@ testFailedGameAscendRetainsIntentAndDoesNotReportAscent();
 testInvalidMarkersFailClosed();
 testInvalidAchievementWonValuesFailClosed();
 testAutoPlayDelegatesIntentAccessToManager();
-console.log('Achievement ascension intent TypeScript synthetic tests passed (Game 2.058, CookieBot 2.052-129).');
+console.log('Achievement ascension intent TypeScript synthetic tests passed (Game 2.058, CookieBot 2.052-130).');
