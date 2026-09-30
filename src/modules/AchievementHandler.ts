@@ -220,12 +220,26 @@ export class AchievementHandler {
    * Find the next achievement to pursue
    */
   findNextAchievement(): void {
+    const intent = this.context.getAchievementAscensionIntent?.();
+    if (intent?.state === 'due') {
+      const target = Game.AchievementsById[intent.targetId];
+      this.context.nextAchievement = intent.targetId;
+      this.context.wantAscend = this.context.plantPending;
+      this.context.setMainActivity(
+        'Waiting to ascend after achievement: ' +
+        target.ddesc.replace(/<q>.*?<\/q>/ig, '')
+      );
+      return;
+    }
+
     this.context.wantAscend = false;
+
     this.handleSmallAchievements();
 
     for (let i = 0; i < this.context.wantedAchievements.length; i++) {
       if (!Game.AchievementsById[this.context.wantedAchievements[i]].won) {
         this.context.nextAchievement = this.context.wantedAchievements[i];
+        this.context.armAchievementAscensionIntent?.(this.context.nextAchievement);
         this.context.setMainActivity(
           'Trying to get achievement: ' +
           Game.AchievementsById[this.context.nextAchievement].ddesc.replace(/<q>.*?<\/q>/ig, '')
@@ -235,6 +249,7 @@ export class AchievementHandler {
     }
 
     this.checkAllAchievementsOK();
+    this.context.armAchievementAscensionIntent?.(this.context.nextAchievement);
   }
 
   /**
@@ -254,6 +269,7 @@ export class AchievementHandler {
           ', try to get it now.'
         );
         this.context.nextAchievement = achievement.id;
+        this.context.armAchievementAscensionIntent?.(this.context.nextAchievement);
         return false;
       }
     }
@@ -268,6 +284,7 @@ export class AchievementHandler {
           ', try to get it now.'
         );
         this.context.nextAchievement = achievement.id;
+        this.context.armAchievementAscensionIntent?.(this.context.nextAchievement);
         return false;
       }
     }
@@ -277,6 +294,7 @@ export class AchievementHandler {
       const upgrade = Game.Upgrades[key];
       if (upgrade.pool === 'prestige' && !upgrade.bought) {
         this.context.nextAchievement = 99; // Follow the white rabbit (from dungeons)
+        this.context.armAchievementAscensionIntent?.(this.context.nextAchievement);
         this.context.setMainActivity(
           'Prestige upgrade ' + upgrade.name + ' is missing, waiting to buy it.'
         );

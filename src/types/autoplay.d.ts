@@ -1,5 +1,5 @@
 import type { AchievementHandler } from '../modules/AchievementHandler';
-import type { AscensionManager } from '../modules/AscensionManager';
+import type { AchievementAscensionIntent, AscensionManager } from '../modules/AscensionManager';
 import type { ClickManager } from '../modules/ClickManager';
 import type { DragonManager } from '../modules/DragonManager';
 import type { GardenManager } from '../modules/GardenManager';
@@ -115,6 +115,8 @@ export interface AutoPlayContext {
   setMainActivity: (activity: string) => void;
   setDeadline: (time: number) => void;
   findNextAchievement: () => void;
+  getAchievementAscensionIntent: () => AchievementAscensionIntent | null;
+  armAchievementAscensionIntent: (targetId: number) => AchievementAscensionIntent | null;
   endPhase: () => boolean;
   grindingCheat: () => boolean;
   preNightMode: () => boolean;

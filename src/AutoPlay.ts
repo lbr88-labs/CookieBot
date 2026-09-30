@@ -274,6 +274,14 @@ export default class AutoPlay {
     }
   }
 
+  getAchievementAscensionIntent() {
+    return this.ascensionManager?.getAchievementAscensionIntent() ?? null;
+  }
+
+  armAchievementAscensionIntent(targetId: number) {
+    return this.ascensionManager?.armAchievementAscensionIntent(targetId) ?? null;
+  }
+
   constructor() {
     // Initialize default configuration
     this.config = this.getDefaultConfig();
