@@ -35,7 +35,10 @@ const runScript = (scriptName, label) => {
     // 1. Module Integration Tests (Medium)
     await runScript('test:modules', 'Module Integration Tests');
 
-    // 2. E2E Smoke Test (Medium)
+    // 2. Shipped beta monolith ascension ownership and loader regressions
+    await runScript('test:ascension-ownership', 'Beta Monolith Ascension Ownership');
+
+    // 3. E2E Smoke Test (Medium)
     await runScript('test:e2e', 'E2E Smoke Test');
 
     // 4. Bot Decision Tests (Integration)

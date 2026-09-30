@@ -64,6 +64,14 @@ AutoPlay.lastStatus = {}; // Track last status to avoid duplicates
 
 AutoPlay.run = function() {
   if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
+  // Ascension screens are player-owned unless this run called Game.Ascend.
+  // Route before clicks, purchases, minigames, and periodic state changes.
+  if (Game.OnAscend || AutoPlay.onAscend) {
+    if (AutoPlay.onAscend && AutoPlay.delay>0) { AutoPlay.delay--; return; }
+    AutoPlay.handleAscend();
+    return;
+  }
+  AutoPlay.resumeAfterManualAscension();
   if (AutoPlay.delay>0) { AutoPlay.delay--; return; }
   AutoPlay.now=Date.now();
   if (AutoPlay.nextAchievement==397) { AutoPlay.runJustRight(); return; }
@@ -1755,6 +1763,8 @@ AutoPlay.ascendLimit = 0.9*Math.floor(2*(1-Game.ascendMeterPercent));
 AutoPlay.wantAscend = false;
 AutoPlay.onAscend = false;
 AutoPlay.loggedAchievements = {}; // Track which achievements we've already logged
+AutoPlay.manualAscensionRun = undefined;
+AutoPlay.manualAscensionWaitReported = false;
 AutoPlay.achievementAscensionIntentKey = 'CookieBot_AchievementAscensionIntent_v1';
 if (typeof AutoPlay.achievementAscensionIntent === 'undefined')
   AutoPlay.achievementAscensionIntent = null;
@@ -1880,6 +1890,26 @@ AutoPlay.getAchievementAscensionWaitReason = function() {
   return '';
 }
 
+// A manual screen belongs to the player. Refresh the bot's run state only after
+// the player has actually reincarnated; these markers are session-only.
+AutoPlay.resumeAfterManualAscension = function() {
+  if (Game.OnAscend || Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
+  AutoPlay.manualAscensionWaitReported = false;
+  if (AutoPlay.manualAscensionRun === undefined) return;
+
+  var previousRun = AutoPlay.manualAscensionRun;
+  AutoPlay.manualAscensionRun = undefined;
+  if (Game.resets !== previousRun) {
+    AutoPlay.findNextAchievement();
+    AutoPlay.setDeadline(0);
+    AutoPlay.now = Date.now();
+    AutoPlay.loggedAchievements = {};
+    AutoPlay.resetTime = Date.now();
+    AutoPlay.neverclickWarn = true;
+    AutoPlay.ascendLimit = 0.9*Math.floor(2*(1-Game.ascendMeterPercent));
+  }
+}
+
 // Check all achievements and log newly won ones
 AutoPlay.checkAchievements = function() {
   for (var i in Game.Achievements) {
@@ -1893,21 +1923,41 @@ AutoPlay.checkAchievements = function() {
 }
 
 AutoPlay.handleAscend = function() {
+  if (Game.OnAscend) {
+    if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
+    if (!AutoPlay.onAscend) {
+      if (AutoPlay.manualAscensionRun === undefined)
+        AutoPlay.manualAscensionRun = Game.resets;
+      if (!AutoPlay.manualAscensionWaitReported) {
+        AutoPlay.logStatus('ascend:waiting',
+          'Waiting for the player to finish manual ascension.');
+        AutoPlay.manualAscensionWaitReported = true;
+      }
+      return;
+    }
+
+    AutoPlay.manualAscensionWaitReported = false;
+    if (AutoPlay.doReincarnate()) {
+      AutoPlay.findNextAchievement();
+      AutoPlay.setDeadline(0); // reactivate all activities
+      AutoPlay.now = Date.now();
+      AutoPlay.savingsStart = AutoPlay.now;
+      AutoPlay.loggedAchievements = {}; // Reset achievement tracking for new run
+    }
+    return;
+  }
+
+  AutoPlay.resumeAfterManualAscension();
+
   // Check for newly won achievements
   AutoPlay.checkAchievements();
   var intent = AutoPlay.getAchievementAscensionIntent();
+  if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
 
-  if (Game.OnAscend) {
-    AutoPlay.doReincarnate();
-    AutoPlay.findNextAchievement();
-    AutoPlay.setDeadline(0); // reactivate all activities
-    AutoPlay.savingsStart = AutoPlay.now;
-    AutoPlay.onAscend=false;
-    AutoPlay.loggedAchievements = {}; // Reset achievement tracking for new run
-    return;
-  }
+  // Ownership stays set between Game.Ascend and the screen. Never issue a
+  // second Game.Ascend while that transition is in flight.
+  if (AutoPlay.onAscend) return;
   if (AutoPlay.achievementAscensionCallStarted) return;
-  if (AutoPlay.onAscend && Game.AscendTimer==0) Game.Ascend(true);
   if (Game.ascensionMode == 0 && Game.prestige == 0)
     AutoPlay.canContinue();  // update achievement goals
   if (intent && intent.state === 'due') {
@@ -2103,8 +2153,8 @@ AutoPlay.canContinue = function() {
 }
 
 AutoPlay.doReincarnate = function() {
-  AutoPlay.onAscend = false;
-  AutoPlay.achievementAscensionCallStarted = false;
+  if (!AutoPlay.onAscend || !Game.OnAscend ||
+      Game.AscendTimer>0 || Game.ReincarnateTimer>0) return false;
   AutoPlay.delay = 10;
   AutoPlay.buyHeavenlyUpgrades();
   if (!Game.Achievements["Neverclick"].won || !Game.Achievements["Hardcore"].won) {
@@ -2114,9 +2164,12 @@ AutoPlay.doReincarnate = function() {
     Game.PickAscensionMode(); Game.nextAscensionMode=1; Game.ConfirmPrompt();
   }
   Game.Reincarnate(true);
+  AutoPlay.onAscend = false;
+  AutoPlay.achievementAscensionCallStarted = false;
   AutoPlay.resetTime=Date.now(); // save the current date for things that need to be delayed after reincarnating
   AutoPlay.neverclickWarn=true;
   AutoPlay.ascendLimit = 0.9*Math.floor(2*(1-Game.ascendMeterPercent));
+  return true;
 }
 
 AutoPlay.mustRebornAscend = function() {

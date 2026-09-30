@@ -11,6 +11,7 @@
     "test": "node tests/run_all.js",
     "test:e2e": "node tests/e2e.js",
     "test:userscript-urls": "node tests/userscript_urls.test.js",
+    "test:ascension-ownership": "node tests/ascension_ownership_monolith.test.js",
     "test:modules": "node tests/modules/all_modules_test.js",
     "test:saves": "node tests/integration/bot_decisions.test.js",
     "start:game": "node scripts/run-game.js",
