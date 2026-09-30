@@ -15,11 +15,12 @@ interface AscensionState {
   resetTime: number;
 }
 
-type AscensionWaitBlocker = 'plant' | 'Sugar frenzy' | 'Sugar blessing';
+type AscensionWaitBlocker = 'prestige' | 'animation' | 'night mode' | 'plant' | 'Sugar frenzy' | 'Sugar blessing';
 
 interface PendingAscensionDecision {
   reason: string;
   blocker: AscensionWaitBlocker;
+  achievementIntent: boolean;
 }
 
 export interface AchievementAscensionIntent {
@@ -217,6 +218,15 @@ export class AscensionManager {
   private handleAchievementWon(targetId: number, hasPersistentIntent: boolean): void {
     const achiev = Game.AchievementsById[targetId];
 
+    const date = new Date();
+    date.setTime(this.context.now - Game.startDate);
+    const legacyTime = Game.sayTime(date.getTime() / 1000 * Game.fps, -1);
+    date.setTime(this.context.now - Game.fullDate);
+    const fullTime = Game.sayTime(date.getTime() / 1000 * Game.fps, -1);
+
+    const reason = "have achievement: " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '') +
+      " after " + legacyTime + "(total: " + fullTime + ")";
+
     // Check if this is first ascension and if we should wait for 365+ prestige
     const isFirstRun = (Game.prestige === 0);
     const currentPrestige = Game.ascendMeterLevel;
@@ -228,31 +238,20 @@ export class AscensionManager {
 
     if (isFirstRun && currentPrestige < 365 && !isHardcoreAchievement) {
       // Don't ascend yet - need to reach 365+ prestige for first ascension
+      if (hasPersistentIntent) this.pendingAscension = { reason, blocker: 'prestige', achievementIntent: true };
       this.context.logStatus('prestige', 'Waiting for 365+ prestige before first ascension (currently ' + Math.floor(currentPrestige) + ')');
       return;
     }
-
-    const date = new Date();
-    date.setTime(this.context.now - Game.startDate);
-    const legacyTime = Game.sayTime(date.getTime() / 1000 * Game.fps, -1);
-    date.setTime(this.context.now - Game.fullDate);
-    const fullTime = Game.sayTime(date.getTime() / 1000 * Game.fps, -1);
-
-    const reason = "have achievement: " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '') +
-      " after " + legacyTime + "(total: " + fullTime + ")";
 
     if (hasPersistentIntent) {
       this.context.wantAscend = this.context.plantPending;
       const waitReason = this.getAchievementAscensionWaitReason();
       if (waitReason) {
         this.context.logStatus('ascend:waiting', waitReason);
-        if (this.context.plantPending) {
-          this.pendingAscension = { reason, blocker: 'plant' };
-          this.context.wantAscend = true;
-        } else if (Game.hasBuff('Sugar frenzy')) {
-          this.pendingAscension = { reason, blocker: 'Sugar frenzy' };
-        } else if (Game.hasBuff('Sugar blessing')) {
-          this.pendingAscension = { reason, blocker: 'Sugar blessing' };
+        const blocker = this.getLiveAscensionWaitBlocker(true);
+        if (blocker) {
+          this.pendingAscension = { reason, blocker, achievementIntent: true };
+          this.context.wantAscend = blocker === 'plant';
         }
         return;
       }
@@ -370,7 +369,8 @@ export class AscensionManager {
     if (typeof targetId !== 'number' || !Number.isFinite(targetId) ||
         Math.floor(targetId) !== targetId || !Game.AchievementsById) return null;
     const target = Game.AchievementsById[targetId];
-    if (!target || target.id !== targetId || typeof target.won !== 'boolean' ||
+    if (!target || target.id !== targetId ||
+        (target.won !== true && target.won !== false && target.won !== 0 && target.won !== 1) ||
         typeof target.name !== 'string' || typeof target.ddesc !== 'string') return null;
     return target;
   }
@@ -648,15 +648,15 @@ export class AscensionManager {
     // Record only the selected decision and the live guard that deferred it.
     // Do not close prompts or start any ascension preparation while waiting.
     if (this.context.wantAscend) {
-      this.pendingAscension = { reason, blocker: 'plant' };
+      this.pendingAscension = { reason, blocker: 'plant', achievementIntent };
       return;
     }
     if (Game.hasBuff("Sugar frenzy")) {
-      this.pendingAscension = { reason, blocker: 'Sugar frenzy' };
+      this.pendingAscension = { reason, blocker: 'Sugar frenzy', achievementIntent };
       return;
     }
     if (Game.hasBuff("Sugar blessing")) {
-      this.pendingAscension = { reason, blocker: 'Sugar blessing' };
+      this.pendingAscension = { reason, blocker: 'Sugar blessing', achievementIntent };
       return;
     }
 
@@ -902,7 +902,7 @@ export class AscensionManager {
     }
 
     if (this.pendingAscension) {
-      const blocker = this.getLiveAscensionWaitBlocker();
+      const blocker = this.getLiveAscensionWaitBlocker(this.pendingAscension.achievementIntent);
       if (!blocker) {
         this.pendingAscension = null;
       } else {
@@ -1045,7 +1045,10 @@ export class AscensionManager {
     };
   }
 
-  private getLiveAscensionWaitBlocker(): AscensionWaitBlocker | null {
+  private getLiveAscensionWaitBlocker(achievementIntent: boolean): AscensionWaitBlocker | null {
+    if (achievementIntent && Game.prestige === 0 && Game.ascendMeterLevel < 365) return 'prestige';
+    if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0 || this.context.onAscend) return 'animation';
+    if (this.context.Config.NightMode > 0 && this.context.preNightMode()) return 'night mode';
     if (this.context.plantPending) return 'plant';
     if (Game.hasBuff('Sugar frenzy')) return 'Sugar frenzy';
     if (Game.hasBuff('Sugar blessing')) return 'Sugar blessing';

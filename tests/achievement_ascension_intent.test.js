@@ -30,7 +30,8 @@ function createStorage(initial) {
 }
 
 function achievement(id, name, won) {
-  return { id, name: name || `Achievement ${id}`, won: !!won,
+  return { id, name: name || `Achievement ${id}`,
+    won: won === true ? 1 : won === false ? 0 : won,
     ddesc: `<q>ignored</q>Description ${id}`, pool: '' };
 }
 
@@ -144,7 +145,7 @@ function armAndWin(runtime) {
   runtime.bot.findNextAchievement();
   assert.strictEqual(runtime.bot.nextAchievement, 453);
   assert.strictEqual(readMarker(runtime.storage).state, 'armed');
-  runtime.game.AchievementsById[453].won = true;
+  runtime.game.AchievementsById[453].won = 1;
 }
 
 // An old save's already-won 453 has no intent to ascend; the next target is 470.
@@ -239,7 +240,7 @@ for (const guard of ['plant', 'Sugar frenzy', 'Sugar blessing']) {
   const game = createGame({ prestige: 0, meter: 364 });
   const runtime = createRuntime(game, storage);
   const hardcore = game.Achievements.Hardcore;
-  hardcore.won = true;
+  hardcore.won = 1;
   runtime.bot.persistAchievementAscensionIntent({
     version: 1,
     state: 'due',
@@ -306,7 +307,7 @@ for (const guard of ['plant', 'Sugar frenzy', 'Sugar blessing']) {
   const runtime = createRuntime(game, unavailable);
   runtime.bot.findNextAchievement();
   assert.strictEqual(runtime.bot.achievementAscensionIntent.state, 'armed');
-  game.AchievementsById[453].won = true;
+  game.AchievementsById[453].won = 1;
   runtime.bot.plantPending = true;
   runtime.bot.handleAscend();
   assert.strictEqual(runtime.bot.achievementAscensionIntent.state, 'due');
@@ -315,6 +316,19 @@ for (const guard of ['plant', 'Sugar frenzy', 'Sugar blessing']) {
   runtime.bot.handleAscend();
   assert.strictEqual(game.ascendCalls, 1);
   assert.strictEqual(runtime.bot.achievementAscensionIntent, null);
+}
+
+// Only Cookie Clicker's numeric 0/1 values (or legacy booleans) are valid won bits.
+{
+  const storage = createStorage();
+  const runtime = createRuntime(createGame(), storage);
+  runtime.bot.findNextAchievement();
+  const marker = runtime.bot.achievementAscensionIntent;
+  marker.state = 'due';
+  runtime.bot.persistAchievementAscensionIntent(marker);
+  runtime.game.AchievementsById[453].won = 2;
+  assert.strictEqual(runtime.bot.getAchievementAscensionIntent(), null);
+  assert.strictEqual(storage.value(markerKey), null);
 }
 
 console.log('Achievement ascension intent regression passed.');

@@ -1777,7 +1777,8 @@ AutoPlay.getAchievementAscensionTarget = function(targetId) {
   if (typeof targetId !== 'number' || !isFinite(targetId) ||
       Math.floor(targetId) !== targetId || !Game.AchievementsById) return null;
   var target = Game.AchievementsById[targetId];
-  if (!target || target.id !== targetId || typeof target.won !== 'boolean' ||
+  if (!target || target.id !== targetId ||
+      (target.won !== true && target.won !== false && target.won !== 0 && target.won !== 1) ||
       typeof target.name !== 'string' || typeof target.ddesc !== 'string') return null;
   return target;
 }

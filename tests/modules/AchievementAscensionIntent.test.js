@@ -75,13 +75,15 @@ class MemoryStorage {
   removeItem(key) { this.values.delete(key); }
 }
 
-function makeAchievement(id, won = false) {
+function makeAchievement(id, won = 0) {
+  if (won === true) won = 1;
+  else if (won === false) won = 0;
   return { id, won, name: `Achievement ${id}`, ddesc: `description ${id}`, pool: 'normal' };
 }
 
 function createScenario(storage = new MemoryStorage(), options = {}) {
   const achievementsById = {
-    [TARGET_ID]: makeAchievement(TARGET_ID, options.targetWon || false),
+    [TARGET_ID]: makeAchievement(TARGET_ID, options.targetWon ?? 0),
     [NEXT_TARGET_ID]: makeAchievement(NEXT_TARGET_ID, false),
     [IDS.ACHIEVEMENT_IDS.TRUE_NEVERCLICK]: makeAchievement(IDS.ACHIEVEMENT_IDS.TRUE_NEVERCLICK, false),
     [IDS.ACHIEVEMENT_IDS.NEVERCLICK]: makeAchievement(IDS.ACHIEVEMENT_IDS.NEVERCLICK, false),
@@ -208,7 +210,7 @@ function testOldWonTargetSelectsNextWithoutAscending() {
 function testDueIntentSurvivesReloadAndWaitsForGuards() {
   const scenario = createScenario();
   armTarget(scenario);
-  scenario.Game.AchievementsById[TARGET_ID].won = true;
+  scenario.Game.AchievementsById[TARGET_ID].won = 1;
   scenario.activeBuffs.add('Sugar blessing');
   scenario.manager.handleAscend();
   assert.strictEqual(JSON.parse(scenario.storage.getItem(INTENT_KEY)).state, 'due');
@@ -218,7 +220,7 @@ function testDueIntentSurvivesReloadAndWaitsForGuards() {
 
   // Simulate a new userscript instance on the same origin and same Cookie Clicker run.
   const reloaded = createScenario(scenario.storage);
-  reloaded.Game.AchievementsById[TARGET_ID].won = true;
+  reloaded.Game.AchievementsById[TARGET_ID].won = 1;
   reloaded.activeBuffs.add('Sugar blessing');
   reloaded.handler.findNextAchievement();
   assert.strictEqual(reloaded.context.nextAchievement, TARGET_ID);
@@ -255,13 +257,18 @@ function testDueIntentSurvivesReloadAndWaitsForGuards() {
 function testFirstAscensionPrestigeGateRetainsDueIntent() {
   const scenario = createScenario(new MemoryStorage(), { prestige: 0, ascendMeterLevel: 300 });
   armTarget(scenario);
-  scenario.Game.AchievementsById[TARGET_ID].won = true;
+  scenario.Game.AchievementsById[TARGET_ID].won = 1;
   scenario.manager.canContinue = () => false;
   scenario.manager.handleAscend();
   assert.strictEqual(scenario.events.ascends, 0);
   assert.strictEqual(JSON.parse(scenario.storage.getItem(INTENT_KEY)).state, 'due');
   assert(scenario.events.statuses.some(({ type, message }) =>
     type === 'prestige' && message.includes('365+ prestige')));
+  const prestigeStatus = scenario.manager.getStatus();
+  assert.strictEqual(prestigeStatus.status, 'waiting');
+  assert.strictEqual(prestigeStatus.details['Wait Guard'], 'prestige');
+  assert.strictEqual(prestigeStatus.nextAction, 'Waiting for prestige');
+  assert(prestigeStatus.reason.includes('have achievement'));
 
   scenario.Game.ascendMeterLevel = 365;
   scenario.manager.handleAscend();
@@ -272,7 +279,7 @@ function testFirstAscensionPrestigeGateRetainsDueIntent() {
 function testFailedGameAscendRetainsIntentAndDoesNotReportAscent() {
   const scenario = createScenario(new MemoryStorage(), { throwAscend: true });
   armTarget(scenario);
-  scenario.Game.AchievementsById[TARGET_ID].won = true;
+  scenario.Game.AchievementsById[TARGET_ID].won = 1;
   scenario.manager.handleAscend();
   assert.strictEqual(scenario.events.ascends, 0);
   assert.strictEqual(JSON.parse(scenario.storage.getItem(INTENT_KEY)).state, 'due');
@@ -290,6 +297,27 @@ function testFailedGameAscendRetainsIntentAndDoesNotReportAscent() {
   scenario.manager.handleAscend();
   assert.strictEqual(scenario.events.ascends, 1);
   assert.strictEqual(scenario.storage.getItem(INTENT_KEY), null);
+}
+
+function testAnimationAndNightWaitsStayVisible() {
+  for (const blocker of ['animation', 'night mode']) {
+    const scenario = createScenario();
+    armTarget(scenario);
+    scenario.Game.AchievementsById[TARGET_ID].won = 1;
+    if (blocker === 'animation') scenario.Game.AscendTimer = 2;
+    else {
+      scenario.context.Config.NightMode = 1;
+      scenario.context.preNightMode = () => true;
+    }
+
+    scenario.manager.handleAscend();
+    assert.strictEqual(scenario.events.ascends, 0);
+    assert.strictEqual(JSON.parse(scenario.storage.getItem(INTENT_KEY)).state, 'due');
+    const status = scenario.manager.getStatus();
+    assert.strictEqual(status.status, 'waiting');
+    assert.strictEqual(status.details['Wait Guard'], blocker);
+    assert.strictEqual(status.nextAction, `Waiting for ${blocker}`);
+  }
 }
 
 function testInvalidMarkersFailClosed() {
@@ -312,6 +340,19 @@ function testInvalidMarkersFailClosed() {
   }
 }
 
+function testInvalidAchievementWonValuesFailClosed() {
+  const currentRun = { startDate: 1000, fullDate: 2000, resets: 4 };
+  for (const won of [2, '1', null]) {
+    const scenario = createScenario(new MemoryStorage({ [INTENT_KEY]: JSON.stringify({
+      version: 1, state: 'due', targetId: TARGET_ID, run: currentRun
+    }) }));
+    scenario.Game.AchievementsById[TARGET_ID].won = won;
+    assert.strictEqual(scenario.manager.getAchievementAscensionIntent(), null);
+    assert.strictEqual(scenario.storage.getItem(INTENT_KEY), null);
+    assert.strictEqual(scenario.events.ascends, 0);
+  }
+}
+
 function testAutoPlayDelegatesIntentAccessToManager() {
   const fakeManager = {
     getAchievementAscensionIntent: () => ({ version: 1, state: 'due', targetId: TARGET_ID }),
@@ -330,7 +371,9 @@ function testAutoPlayDelegatesIntentAccessToManager() {
 testOldWonTargetSelectsNextWithoutAscending();
 testDueIntentSurvivesReloadAndWaitsForGuards();
 testFirstAscensionPrestigeGateRetainsDueIntent();
+testAnimationAndNightWaitsStayVisible();
 testFailedGameAscendRetainsIntentAndDoesNotReportAscent();
 testInvalidMarkersFailClosed();
+testInvalidAchievementWonValuesFailClosed();
 testAutoPlayDelegatesIntentAccessToManager();
 console.log('Achievement ascension intent TypeScript synthetic tests passed (Game 2.058, CookieBot 2.052-129).');
