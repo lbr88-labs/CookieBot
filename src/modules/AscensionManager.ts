@@ -15,12 +15,20 @@ interface AscensionState {
   resetTime: number;
 }
 
+type AscensionWaitBlocker = 'plant' | 'Sugar frenzy' | 'Sugar blessing';
+
+interface PendingAscensionDecision {
+  reason: string;
+  blocker: AscensionWaitBlocker;
+}
+
 // Priority upgrades for heavenly cookie purchases
 const PRIO_UPGRADES = [363, 323, 411, 412, 413, 264, 265, 266, 267, 268, 520, 181, 282, 283, 284, 291, 393, 394];
 
 export class AscensionManager {
   private state: AscensionState;
   private context: AutoPlayContext;
+  private pendingAscension: PendingAscensionDecision | null = null;
 
   constructor(context: AutoPlayContext) {
     this.context = context;
@@ -75,6 +83,9 @@ export class AscensionManager {
    * Checks achievements, prestige levels, and decides when to ascend
    */
   handleAscend(): void {
+    // Each pass reevaluates whether an ascension decision is still pending.
+    this.pendingAscension = null;
+
     // Check for newly won achievements
     this.checkAchievements();
 
@@ -259,9 +270,8 @@ export class AscensionManager {
       2
     );
 
-    if (!this.context.wantAscend && daysInRun > 20) {
-      this.context.addActivity("Still " + Beautify(maxDaysInRun - daysInRun) +
-        " days until next hard ascend.");
+    if (!this.context.wantAscend && daysInRun > 20 && daysInRun <= maxDaysInRun) {
+      this.context.addActivity("Waiting for the hard ascend time threshold.");
     }
 
     if (daysInRun > maxDaysInRun && daysInRun > 20) {
@@ -414,24 +424,31 @@ export class AscensionManager {
    * Perform the actual ascension
    */
   private doAscend(reason: string, log: boolean = false): void {
+    this.pendingAscension = null;
     if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) return;
     if (this.context.onAscend || Game.OnAscend) return;
+
+    this.context.wantAscend = this.context.plantPending;
+
+    // Record only the selected decision and the live guard that deferred it.
+    // Do not close prompts or start any ascension preparation while waiting.
+    if (this.context.wantAscend) {
+      this.pendingAscension = { reason, blocker: 'plant' };
+      return;
+    }
+    if (Game.hasBuff("Sugar frenzy")) {
+      this.pendingAscension = { reason, blocker: 'Sugar frenzy' };
+      return;
+    }
+    if (Game.hasBuff("Sugar blessing")) {
+      this.pendingAscension = { reason, blocker: 'Sugar blessing' };
+      return;
+    }
 
     // Close any open prompts (like gift popup) before ascending
     if (Game.promptOn) {
       Game.ClosePrompt();
     }
-
-    this.context.logStatus('ascend', reason);
-    this.context.wantAscend = this.context.plantPending;
-    this.context.addActivity("Preparing to ascend.");
-
-    // Do not ascend when waiting for a plant
-    if (this.context.wantAscend) return;
-
-    // Do not ascend during sugar frenzy/blessing
-    if (Game.hasBuff("Sugar frenzy")) return;
-    if (Game.hasBuff("Sugar blessing")) return;
 
     this.context.setDeadline(0); // full activity to monitor ascension
 
@@ -471,17 +488,10 @@ export class AscensionManager {
     } else {
       this.context.info(reason);
 
-      // Log prestige gain
+      // Capture prestige values before the game changes ascension state.
+      const currentPrestige = Game.prestige;
       const prestigeGain = Game.ascendMeterLevel;
-      const newPrestige = Game.prestige + prestigeGain;
-
-      if (typeof Beautify !== 'undefined' && prestigeGain > 0) {
-        this.context.logAction('Ascending',
-          reason + ' | Prestige: ' + Beautify(Game.prestige) + ' → ' +
-          Beautify(newPrestige) + ' (+' + Beautify(prestigeGain) + ')');
-      } else {
-        this.context.logAction('Ascending', reason);
-      }
+      const newPrestige = currentPrestige + prestigeGain;
 
       this.context.delay = 15;
 
@@ -496,6 +506,15 @@ export class AscensionManager {
       }
       Game.Ascend(true);
       this.context.onAscend = true;
+      this.context.logStatus('ascend', reason);
+      this.context.addActivity("Ascension started.");
+      if (typeof Beautify !== 'undefined' && prestigeGain > 0) {
+        this.context.logAction('Ascending',
+          reason + ' | Prestige: ' + Beautify(currentPrestige) + ' → ' +
+          Beautify(newPrestige) + ' (+' + Beautify(prestigeGain) + ')');
+      } else {
+        this.context.logAction('Ascending', reason);
+      }
     }
   }
 
@@ -503,6 +522,8 @@ export class AscensionManager {
    * Handle reincarnation (after ascending)
    */
   private doReincarnate(): void {
+    this.pendingAscension = null;
+
     // Close any open prompts before reincarnating
     if (Game.promptOn) {
       Game.ClosePrompt();
@@ -651,6 +672,27 @@ export class AscensionManager {
       };
     }
 
+    if (this.pendingAscension) {
+      const blocker = this.getLiveAscensionWaitBlocker();
+      if (!blocker) {
+        this.pendingAscension = null;
+      } else {
+        this.pendingAscension.blocker = blocker;
+        return {
+          module: 'Ascension',
+          status: 'waiting',
+          currentAction: 'Waiting to ascend',
+          reason: this.pendingAscension.reason,
+          nextAction: `Waiting for ${blocker}`,
+          icon: '🌟',
+          details: {
+            'Pending Reason': this.pendingAscension.reason,
+            'Wait Guard': blocker
+          }
+        };
+      }
+    }
+
     const currentPrestige = Game.prestige;
     const prestigeGain = Game.ascendMeterLevel;
     const targetAchievement = Game.AchievementsById[this.context.nextAchievement];
@@ -772,5 +814,12 @@ export class AscensionManager {
         'Resets': Game.resets
       }
     };
+  }
+
+  private getLiveAscensionWaitBlocker(): AscensionWaitBlocker | null {
+    if (this.context.plantPending) return 'plant';
+    if (Game.hasBuff('Sugar frenzy')) return 'Sugar frenzy';
+    if (Game.hasBuff('Sugar blessing')) return 'Sugar blessing';
+    return null;
   }
 }
