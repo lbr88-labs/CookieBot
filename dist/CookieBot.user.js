@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name CookieBot (TypeScript)
 // @namespace https://github.com/lbr88/CookieBot
-// @version 2.052-129
+// @version 2.052-130
 // @description Automated bot for Cookie Clicker game (TypeScript version)
 // @author lbr88
 // @include /https?://orteil.dashnet.org/cookieclicker/
