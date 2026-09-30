@@ -276,6 +276,41 @@ function testFirstAscensionPrestigeGateRetainsDueIntent() {
   assert.strictEqual(scenario.storage.getItem(INTENT_KEY), null);
 }
 
+function testHardcoreTargetsReportPlantWaitAndAscendWhenClear() {
+  const currentRun = { startDate: 1000, fullDate: 2000, resets: 4 };
+  for (const targetId of [
+    IDS.ACHIEVEMENT_IDS.HARDCORE,
+    IDS.ACHIEVEMENT_IDS.NEVERCLICK,
+    IDS.ACHIEVEMENT_IDS.TRUE_NEVERCLICK
+  ]) {
+    const scenario = createScenario(new MemoryStorage({ [INTENT_KEY]: JSON.stringify({
+      version: 1,
+      state: 'due',
+      targetId,
+      run: currentRun
+    }) }), { prestige: 0, ascendMeterLevel: 300 });
+    scenario.Game.AchievementsById[targetId].won = 1;
+    scenario.context.nextAchievement = targetId;
+    scenario.context.plantPending = true;
+    scenario.manager.canContinue = () => false;
+
+    scenario.manager.handleAscend();
+    assert.strictEqual(scenario.events.ascends, 0);
+    assert.strictEqual(JSON.parse(scenario.storage.getItem(INTENT_KEY)).state, 'due');
+    const status = scenario.manager.getStatus();
+    assert.strictEqual(status.status, 'waiting');
+    assert.strictEqual(status.details['Wait Guard'], 'plant');
+    assert.strictEqual(status.nextAction, 'Waiting for plant');
+
+    scenario.context.plantPending = false;
+    scenario.manager.handleAscend();
+    assert.strictEqual(scenario.events.ascends, 1);
+    assert.strictEqual(scenario.storage.getItem(INTENT_KEY), null);
+    scenario.manager.handleAscend();
+    assert.strictEqual(scenario.events.ascends, 1);
+  }
+}
+
 function testFailedGameAscendRetainsIntentAndDoesNotReportAscent() {
   const scenario = createScenario(new MemoryStorage(), { throwAscend: true });
   armTarget(scenario);
@@ -371,6 +406,7 @@ function testAutoPlayDelegatesIntentAccessToManager() {
 testOldWonTargetSelectsNextWithoutAscending();
 testDueIntentSurvivesReloadAndWaitsForGuards();
 testFirstAscensionPrestigeGateRetainsDueIntent();
+testHardcoreTargetsReportPlantWaitAndAscendWhenClear();
 testAnimationAndNightWaitsStayVisible();
 testFailedGameAscendRetainsIntentAndDoesNotReportAscent();
 testInvalidMarkersFailClosed();

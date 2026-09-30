@@ -230,11 +230,7 @@ export class AscensionManager {
     // Check if this is first ascension and if we should wait for 365+ prestige
     const isFirstRun = (Game.prestige === 0);
     const currentPrestige = Game.ascendMeterLevel;
-    const isHardcoreAchievement = (
-      achiev.id === Game.AchievementsById[ACHIEVEMENT_IDS.HARDCORE].id ||
-      achiev.id === Game.AchievementsById[ACHIEVEMENT_IDS.NEVERCLICK].id ||
-      achiev.id === Game.AchievementsById[ACHIEVEMENT_IDS.TRUE_NEVERCLICK].id
-    );
+    const isHardcoreAchievement = this.isHardcoreAchievement(targetId);
 
     if (isFirstRun && currentPrestige < 365 && !isHardcoreAchievement) {
       // Don't ascend yet - need to reach 365+ prestige for first ascension
@@ -1046,12 +1042,23 @@ export class AscensionManager {
   }
 
   private getLiveAscensionWaitBlocker(achievementIntent: boolean): AscensionWaitBlocker | null {
-    if (achievementIntent && Game.prestige === 0 && Game.ascendMeterLevel < 365) return 'prestige';
+    const intentTargetId = achievementIntent
+      ? this.getAchievementAscensionIntent()?.targetId
+      : undefined;
+    const targetId = intentTargetId ?? this.context.nextAchievement;
+    if (achievementIntent && Game.prestige === 0 && Game.ascendMeterLevel < 365 &&
+      !this.isHardcoreAchievement(targetId)) return 'prestige';
     if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0 || this.context.onAscend) return 'animation';
     if (this.context.Config.NightMode > 0 && this.context.preNightMode()) return 'night mode';
     if (this.context.plantPending) return 'plant';
     if (Game.hasBuff('Sugar frenzy')) return 'Sugar frenzy';
     if (Game.hasBuff('Sugar blessing')) return 'Sugar blessing';
     return null;
+  }
+
+  private isHardcoreAchievement(targetId: number): boolean {
+    return targetId === ACHIEVEMENT_IDS.HARDCORE ||
+      targetId === ACHIEVEMENT_IDS.NEVERCLICK ||
+      targetId === ACHIEVEMENT_IDS.TRUE_NEVERCLICK;
   }
 }
