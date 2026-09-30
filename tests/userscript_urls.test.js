@@ -22,7 +22,7 @@ function runtimeUrl(source, filePath) {
 const betaPath = path.join(root, 'CookieBot.user.js');
 const beta = fs.readFileSync(betaPath, 'utf8');
 const betaUrl = `${pagesBase}/CookieBot.user.js`;
-assert.equal(metadataValue(beta, 'version'), '2.052-43');
+assert.equal(metadataValue(beta, 'version'), '2.052-44');
 assert.equal(metadataValue(beta, 'updateURL'), betaUrl);
 assert.equal(metadataValue(beta, 'downloadURL'), betaUrl);
 assert.equal(metadataValue(beta, 'grant'), 'none');
@@ -30,7 +30,7 @@ assert.equal(runtimeUrl(beta, betaPath), `${pagesBase}/cookieAutoPlayBeta.js`);
 
 const typescriptPath = path.join(root, 'dist', 'CookieBot.user.js');
 const typescript = fs.readFileSync(typescriptPath, 'utf8');
-const typescriptVersion = '2.052-127';
+const typescriptVersion = '2.052-128';
 const typescriptUrl = `${pagesBase}/dist/CookieBot.user.js`;
 const payloadPath = path.join(root, 'dist', `cookieAutoPlayBeta-v${typescriptVersion}.js`);
 assert.equal(metadataValue(typescript, 'version'), typescriptVersion);

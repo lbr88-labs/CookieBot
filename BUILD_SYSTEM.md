@@ -6,7 +6,7 @@ The maintained fork's Pages base is `https://lbr88-labs.github.io/CookieBot/`. T
 
 - The beta browser monolith is the root [`cookieAutoPlayBeta.js`](https://lbr88-labs.github.io/CookieBot/cookieAutoPlayBeta.js).
 - The root [`CookieBot.user.js`](CookieBot.user.js) is a separate beta userscript, maintained apart from the TypeScript build. Its `@updateURL`, `@downloadURL`, and `Game.LoadMod` now use the canonical Pages URLs. This correction has no browser runtime or save validation, and the root beta userscript has no stable designation.
-- The experimental TypeScript userscript is [`dist/CookieBot.user.js`](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js). At version `2.052-127`, it loads the pinned [`dist/cookieAutoPlayBeta-v2.052-127.js`](https://lbr88-labs.github.io/CookieBot/dist/cookieAutoPlayBeta-v2.052-127.js) bundle.
+- The experimental TypeScript userscript is [`dist/CookieBot.user.js`](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js). At version `2.052-128`, it loads the pinned [`dist/cookieAutoPlayBeta-v2.052-128.js`](https://lbr88-labs.github.io/CookieBot/dist/cookieAutoPlayBeta-v2.052-128.js) bundle.
 
 The TypeScript build also produces `dist/cookieAutoPlayBeta-v{version}.js` and the `dist/cookieAutoPlayBeta-latest.js` copy. The generated TypeScript userscript loads the matching versioned bundle; it does not request `latest`. The `latest` file is a separate alias for direct consumers.
 
@@ -33,7 +33,7 @@ npm run type-check
 
 ## Generated files and version behavior
 
-Webpack writes the versioned bundle as `dist/cookieAutoPlayBeta-v{version}.js`. `scripts/post-build.js` copies that bundle to `dist/cookieAutoPlayBeta-latest.js`. `scripts/build-userscript.js` writes `dist/CookieBot.user.js`, whose `Game.LoadMod` URL includes the same versioned filename. For the checked-in `2.052-127` userscript, that filename is `cookieAutoPlayBeta-v2.052-127.js`.
+Webpack writes the versioned bundle as `dist/cookieAutoPlayBeta-v{version}.js`. `scripts/post-build.js` copies that bundle to `dist/cookieAutoPlayBeta-latest.js`. `scripts/build-userscript.js` writes `dist/CookieBot.user.js`, whose `Game.LoadMod` URL includes the same versioned filename. For the checked-in `2.052-128` userscript, that filename is `cookieAutoPlayBeta-v2.052-128.js`.
 
 The TypeScript artifacts are experimental and distinct from the root beta monolith and root beta userscript. Install one channel at a time. Before comparing channels, export a backup and use a disposable save; legacy beta and TypeScript configuration paths overlap (`autoplayConfig` and `CookieBot_Config`) and settings parity has not been established.
 
