@@ -185,6 +185,14 @@ export default class AutoPlay {
   }
 
   get resetTime(): number {
+    const gameStartDate = (globalThis as any).Game?.startDate;
+    if (typeof gameStartDate === 'number' &&
+        Number.isFinite(gameStartDate) &&
+        gameStartDate > 0 &&
+        gameStartDate <= Date.now()) {
+      return gameStartDate;
+    }
+
     return this.state.resetTime || this.state.now;
   }
 
