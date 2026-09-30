@@ -8,9 +8,15 @@ const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'cookieAutoPlayBeta.js'), 'utf8');
 const betaUrl = 'https://lbr88-labs.github.io/CookieBot/cookieAutoPlayBeta.js';
 
-function createHarness() {
+function createHarness(options) {
+  options = options || {};
   const calls = {
     closePrompt: 0,
+    bakeryNamePrompt: 0,
+    confirmPrompt: 0,
+    tickerClicks: 0,
+    findNextAchievement: 0,
+    smallAchievementHandlers: 0,
     modePick: 0,
     reincarnate: 0,
     clicks: 0,
@@ -45,8 +51,8 @@ function createHarness() {
     OnAscend: true,
     promptOn: 1,
     promptText: 'Player-owned prompt',
-    bakeryName: 'Synthetic bakery',
-    bakeryNameL: { textContent: 'Synthetic bakery' },
+    bakeryName: options.prefixed ? 'Automated Synthetic bakery' : 'Synthetic bakery',
+    bakeryNameL: { textContent: options.prefixed ? 'Automated Synthetic bakery' : 'Synthetic bakery' },
     onMenu: true,
     Achievements: {
       Hardcore: { won: true },
@@ -56,7 +62,12 @@ function createHarness() {
     Notify() {},
     ClosePrompt() { calls.closePrompt++; this.promptOn = 0; },
     PickAscensionMode() { calls.modePick++; },
-    ConfirmPrompt() {},
+    bakeryNamePrompt() { calls.bakeryNamePrompt++; },
+    ConfirmPrompt() { calls.confirmPrompt++; },
+    tickerL: {
+      click() { calls.tickerClicks++; },
+      scrollIntoView() {}
+    },
     hasBuff() { return false; },
     Reincarnate() {
       calls.reincarnate++;
@@ -76,6 +87,7 @@ function createHarness() {
     setTimeout() { return 1; },
     setInterval() { return 1; },
     clearInterval() {},
+    l() { return { innerHTML: '' }; },
     console,
     Date,
     Math,
@@ -103,6 +115,68 @@ function createHarness() {
     bot.deadline = value;
   };
   return { bot, game, calls, storageCalls };
+}
+
+function checkReadyReloadManualAscension() {
+  const { bot, game, calls } = createHarness({ prefixed: true });
+  const originalName = game.bakeryName;
+  bot.nextAchievement = 470;
+  bot.deadline = 123456789;
+  game.promptOn = 1;
+
+  // Simulate a saved manual ascension screen loading before the game becomes
+  // ready, then exercise the real launch path after readiness.
+  assert.strictEqual(game.bakeryName, originalName,
+    'top-level initialization preserves the prefixed bakery name on manual screen');
+  assert.strictEqual(calls.bakeryNamePrompt, 0,
+    'top-level initialization does not open the bakery-name prompt');
+  assert.strictEqual(calls.confirmPrompt, 0,
+    'top-level initialization does not confirm the bakery-name prompt');
+
+  const won = { won: true, pool: '', id: 999, ddesc: 'Already earned' };
+  game.Achievements = new Proxy({
+    'Tabloid addiction': { won: false, pool: '', id: 1, ddesc: 'Unfinished small achievement' }
+  }, {
+    get(target, key) { return Object.prototype.hasOwnProperty.call(target, key) ? target[key] : won; }
+  });
+  game.AchievementsById = new Proxy({ 0: won }, {
+    get(target, key) { return Object.prototype.hasOwnProperty.call(target, key) ? target[key] : won; }
+  });
+  game.Upgrades = {};
+  game.ready = true;
+  game.version = bot.gameVersion;
+  game.getDynamicTooltip = () => '';
+  bot.Config = { CheatLumps: 0, NightMode: 0 };
+  bot.info = () => {};
+  bot.logStatus = () => {};
+  bot.createDashboard = () => {};
+  bot.updateDashboard = () => {};
+  const findNextAchievement = bot.findNextAchievement;
+  bot.findNextAchievement = function() {
+    calls.findNextAchievement++;
+    return findNextAchievement.apply(this, arguments);
+  };
+  const handleSmallAchievements = bot.handleSmallAchievements;
+  bot.handleSmallAchievements = function() {
+    calls.smallAchievementHandlers++;
+    return handleSmallAchievements.apply(this, arguments);
+  };
+
+  bot.launch();
+  bot.run();
+  bot.run();
+
+  assert.strictEqual(calls.findNextAchievement, 0,
+    'ready launch defers target discovery on a restored manual screen');
+  assert.strictEqual(calls.smallAchievementHandlers, 0,
+    'unfinished small achievements are not handled on manual screen');
+  assert.strictEqual(calls.tickerClicks, 0, 'manual startup does not click the ticker');
+  assert.strictEqual(calls.bakeryNamePrompt, 0, 'manual startup does not open prompts');
+  assert.strictEqual(calls.confirmPrompt, 0, 'manual startup does not confirm prompts');
+  assert.strictEqual(game.bakeryName, originalName, 'manual startup preserves bakery name');
+  assert.strictEqual(game.promptOn, 1, 'manual startup leaves the prompt open');
+  assert.strictEqual(bot.nextAchievement, 470, 'manual startup preserves the target');
+  assert.strictEqual(bot.deadline, 123456789, 'manual startup preserves the deadline');
 }
 
 function checkManualScreenAndReload() {
@@ -220,6 +294,7 @@ function checkBetaLoaderTargets() {
 }
 
 checkManualScreenAndReload();
+checkReadyReloadManualAscension();
 checkBotOwnedAndPlayerResume();
 checkBetaLoaderTargets();
 console.log('Root beta monolith ownership and browser/Steam loader checks passed.');

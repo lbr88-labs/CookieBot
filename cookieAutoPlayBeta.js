@@ -1654,7 +1654,9 @@ AutoPlay.findNextWrinkler = function() {
 
 //===================== Handle Small Achievements ==========================
 AutoPlay.backupHeight = 0;
-if (Game.bakeryName.slice(0,AutoPlay.robotName.length)==AutoPlay.robotName) {
+// A loaded ascension screen belongs to the player, including its bakery-name
+// prompt. Do not consume the bot prefix until normal play resumes.
+if (!Game.OnAscend && Game.bakeryName.slice(0,AutoPlay.robotName.length)==AutoPlay.robotName) {
   Game.bakeryName = Game.bakeryName.slice(AutoPlay.robotName.length,Game.bakeryName.length);
   Game.bakeryNamePrompt(); Game.ConfirmPrompt();
 }
@@ -3494,7 +3496,9 @@ AutoPlay.launch = function() {
     clearInterval(AutoPlay.autoPlayer);
   }
   AutoPlay.autoPlayer = setInterval(AutoPlay.run, 300); // 100 is too quick
-  AutoPlay.findNextAchievement();
+  // findNextAchievement() runs small-achievement handlers (including prompt
+  // and ticker actions), so defer it while a restored manual screen is open.
+  if (!Game.OnAscend) AutoPlay.findNextAchievement();
   l('versionNumber').innerHTML=
     'v. '+Game.version+" (with autoplay v."+AutoPlay.version+")";
   l('versionNumber').innerHTML='v. '+Game.version+' <span '+
