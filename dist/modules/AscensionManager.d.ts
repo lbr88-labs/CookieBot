@@ -11,10 +11,24 @@ interface AscensionState {
     neverclickWarn: boolean;
     resetTime: number;
 }
+export interface AchievementAscensionIntent {
+    version: 1;
+    state: 'armed' | 'due';
+    targetId: number;
+    run: {
+        startDate: number;
+        fullDate: number;
+        resets: number;
+    };
+}
 export declare class AscensionManager {
     private state;
     private context;
     private pendingAscension;
+    private achievementAscensionIntent;
+    private achievementAscensionIntentLoaded;
+    private achievementAscensionStorageWarningLogged;
+    private achievementAscensionCallStarted;
     constructor(context: AutoPlayContext);
     /**
      * Safely confirm a prompt, handling cases where the game loop might be paused
@@ -37,6 +51,23 @@ export declare class AscensionManager {
      * Handle when the target achievement is won
      */
     private handleAchievementWon;
+    /**
+     * Read and validate CookieBot's small run-bound achievement intent marker.
+     * A won bit without this marker never becomes an ascension decision.
+     */
+    getAchievementAscensionIntent(): AchievementAscensionIntent | null;
+    /** Arm the current unearned goal unless a due intent already has priority. */
+    armAchievementAscensionIntent(targetId: number): AchievementAscensionIntent | null;
+    /** Clear the marker only after the game accepted the ascent or it is invalid. */
+    clearAchievementAscensionIntent(): void;
+    private getAchievementAscensionRun;
+    private isFiniteRun;
+    private getAchievementAscensionTarget;
+    private getAchievementAscensionStorage;
+    private persistAchievementAscensionIntent;
+    private removeAchievementAscensionStorage;
+    private warnAchievementAscensionStorageUnavailable;
+    private getAchievementAscensionWaitReason;
     /**
      * Check for endless cycle achievement (1000 ascends)
      */
@@ -88,6 +119,7 @@ export declare class AscensionManager {
      */
     getStatus(): ModuleStatus;
     private getLiveAscensionWaitBlocker;
+    private isHardcoreAchievement;
 }
 export {};
 //# sourceMappingURL=AscensionManager.d.ts.map

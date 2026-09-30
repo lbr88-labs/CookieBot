@@ -3,7 +3,7 @@
  */
 import type { AutoPlayConfig, AutoPlayState } from './types/autoplay';
 export default class AutoPlay {
-    static readonly version = "2.052-130";
+    static readonly version = "2.052-131";
     private config;
     private state;
     Config: {
@@ -113,6 +113,8 @@ export default class AutoPlay {
      * Find next achievement to target (delegates to AchievementHandler)
      */
     findNextAchievement(): void;
+    getAchievementAscensionIntent(): import("./modules/AscensionManager").AchievementAscensionIntent | null;
+    armAchievementAscensionIntent(targetId: number): import("./modules/AscensionManager").AchievementAscensionIntent | null;
     constructor();
     /**
      * Trigger ascension (delegates to AscensionManager)

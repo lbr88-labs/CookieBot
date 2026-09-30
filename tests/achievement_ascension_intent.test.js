@@ -88,12 +88,14 @@ function createGame(options) {
     wrinklers: [],
     buffs,
     ascendCalls: 0,
+    ascendArguments: [],
     failingAscendCalls: 0,
     hasBuff(name) { return !!this.buffs[name]; },
     sayTime() { return 'time'; },
     isMinigameReady() { return false; },
     Ascend() {
       this.ascendCalls++;
+      this.ascendArguments.push(Array.from(arguments));
       if (this.failingAscendCalls > 0) {
         this.failingAscendCalls--;
         throw new Error('synthetic Game.Ascend failure');
@@ -146,6 +148,28 @@ function armAndWin(runtime) {
   assert.strictEqual(runtime.bot.nextAchievement, 453);
   assert.strictEqual(readMarker(runtime.storage).state, 'armed');
   runtime.game.AchievementsById[453].won = 1;
+}
+
+// Synthetic, nonprivate immediate-ascent setup and exact repro:
+// 1. Create the in-memory Game below with an unearned target 453, prestige 1000,
+//    meter 400, no timers/buffs/plant, and empty localStorage.
+// 2. findNextAchievement arms target 453; marking its Cookie Clicker won bit as
+//    numeric 1 makes that intent due.
+// 3. handleAscend should invoke Game.Ascend(true) once and consume the marker.
+// Run: node tests/achievement_ascension_intent.test.js
+// This proves the call contract only; it does not simulate a live game transition.
+{
+  const storage = createStorage();
+  const game = createGame({ prestige: 1000, meter: 400 });
+  const runtime = createRuntime(game, storage);
+  armAndWin(runtime);
+  runtime.bot.handleAscend();
+  assert.strictEqual(game.ascendCalls, 1, 'eligible due target starts one ascent immediately');
+  assert.deepStrictEqual(game.ascendArguments[0], [true], 'achievement ascent uses the game API flag');
+  assert.strictEqual(runtime.bot.onAscend, true, 'successful call transfers ownership to CookieBot');
+  assert.strictEqual(storage.value(markerKey), null, 'successful call consumes the due marker');
+  runtime.bot.handleAscend();
+  assert.strictEqual(game.ascendCalls, 1, 'follow-up check cannot duplicate the ascent');
 }
 
 // An old save's already-won 453 has no intent to ascend; the next target is 470.
