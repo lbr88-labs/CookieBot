@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name CookieBot
 // @namespace https://github.com/lbr88/CookieBot
-// @version 2.052-43
+// @version 2.052-44
 // @description Automated bot for Cookie Clicker game
 // @author lbr88
 // @include /https?://orteil.dashnet.org/cookieclicker/
