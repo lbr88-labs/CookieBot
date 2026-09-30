@@ -21,6 +21,8 @@ const PRIO_UPGRADES = [363, 323, 411, 412, 413, 264, 265, 266, 267, 268, 520, 18
 export class AscensionManager {
   private state: AscensionState;
   private context: AutoPlayContext;
+  private manualWaitReported: boolean = false;
+  private manualAscensionRun: number | undefined;
 
   constructor(context: AutoPlayContext) {
     this.context = context;
@@ -75,24 +77,41 @@ export class AscensionManager {
    * Checks achievements, prestige levels, and decides when to ascend
    */
   handleAscend(): void {
-    // Check for newly won achievements
-    this.checkAchievements();
+    // Do not evaluate ascension decisions while either game transition is active.
+    // In particular, a screen restored after reload has no bot ownership.
+    if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) return;
+    if (!Game.OnAscend) this.resumeAfterManualAscension();
 
-    // Handle reincarnation if we're on the ascend screen
     if (Game.OnAscend) {
-      this.doReincarnate();
-      this.context.findNextAchievement();
-      this.context.setDeadline(0); // reactivate all activities
-      this.context.now = Date.now();
-      this.context.onAscend = false;
-      this.state.loggedAchievements = {}; // Reset achievement tracking for new run
+      if (!this.context.onAscend) {
+        if (this.manualAscensionRun === undefined) {
+          this.manualAscensionRun = Game.resets;
+        }
+        if (!this.manualWaitReported) {
+          this.context.logStatus('ascend', 'Waiting for the player to finish manual ascension.');
+          this.manualWaitReported = true;
+        }
+        return;
+      }
+
+      this.manualWaitReported = false;
+      if (this.doReincarnate()) {
+        this.context.findNextAchievement();
+        this.context.setDeadline(0); // reactivate all activities
+        this.context.now = Date.now();
+        this.state.loggedAchievements = {}; // Reset achievement tracking for new run
+      }
       return;
     }
 
-    // Continue ascension process if timer is ready
-    if (this.context.onAscend && Game.AscendTimer === 0) {
-      Game.Ascend(true);
-    }
+    this.manualWaitReported = false;
+
+    // Ownership remains true from the actual Game.Ascend call until the
+    // corresponding bot reincarnation completes. Never start a second ascent.
+    if (this.context.onAscend) return;
+
+    // Check for newly won achievements
+    this.checkAchievements();
 
     // Update achievement goals for first run
     if (Game.ascensionMode === 0 && Game.prestige === 0) {
@@ -141,6 +160,26 @@ export class AscensionManager {
         this.context.nextAchievement === 108 && Game.ascendMeterLevel > 1111) {
       this.doAscend("getting season switcher.", true);
       return;
+    }
+  }
+
+  /** Refresh bot state after the player finishes a manual ascension screen. */
+  resumeAfterManualAscension(): void {
+    if (Game.OnAscend || Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) return;
+
+    this.manualWaitReported = false;
+    if (this.manualAscensionRun === undefined) return;
+
+    const previousRun = this.manualAscensionRun;
+    this.manualAscensionRun = undefined;
+    if (Game.resets !== previousRun) {
+      this.context.findNextAchievement();
+      this.context.setDeadline(0);
+      this.context.now = Date.now();
+      this.state.loggedAchievements = {};
+      this.state.resetTime = Date.now();
+      this.state.neverclickWarn = true;
+      this.state.ascendLimit = 0.9 * Math.floor(2 * (1 - Game.ascendMeterPercent));
     }
   }
 
@@ -502,13 +541,15 @@ export class AscensionManager {
   /**
    * Handle reincarnation (after ascending)
    */
-  private doReincarnate(): void {
+  private doReincarnate(): boolean {
+    if (!this.context.onAscend || !Game.OnAscend ||
+        Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) return false;
+
     // Close any open prompts before reincarnating
     if (Game.promptOn) {
       Game.ClosePrompt();
     }
 
-    this.context.onAscend = false;
     this.context.delay = 10;
     this.buyHeavenlyUpgrades();
 
@@ -526,6 +567,7 @@ export class AscensionManager {
     }
 
     Game.Reincarnate(true);
+    this.context.onAscend = false;
     this.state.resetTime = Date.now(); // save the current date for things that need to be delayed after reincarnating
 
     // Reset savings start time after reincarnation
@@ -535,6 +577,7 @@ export class AscensionManager {
 
     this.state.neverclickWarn = true;
     this.state.ascendLimit = 0.9 * Math.floor(2 * (1 - Game.ascendMeterPercent));
+    return true;
   }
 
   /**
@@ -618,7 +661,41 @@ export class AscensionManager {
    * Get current ascension manager status
    */
   getStatus(): ModuleStatus {
-    // Check if on ascension screen
+    // A restored/manual ascension screen belongs to the player. The bot must
+    // leave its prompts and heavenly-upgrade choices untouched.
+    if (Game.OnAscend && !this.context.onAscend) {
+      return {
+        module: 'Ascension',
+        status: 'waiting',
+        currentAction: 'Waiting for player',
+        reason: 'Manual ascension screen',
+        nextAction: 'Choose heavenly upgrades and reincarnate to resume the bot',
+        icon: '🌟',
+        details: {
+          'Heavenly Chips': typeof Beautify !== 'undefined' ? Beautify(Math.floor(Game.heavenlyChips)) : Math.floor(Game.heavenlyChips),
+          'Prestige': typeof Beautify !== 'undefined' ? Beautify(Math.floor(Game.prestige)) : Math.floor(Game.prestige),
+          'On Ascend Screen': true
+        }
+      };
+    }
+
+    if (Game.OnAscend && Game.ReincarnateTimer > 0) {
+      return {
+        module: 'Ascension',
+        status: 'waiting',
+        currentAction: 'Waiting for reincarnation animation',
+        reason: 'Bot reincarnation in progress',
+        nextAction: 'Resume after reincarnation',
+        icon: '🌟',
+        details: {
+          'Heavenly Chips': typeof Beautify !== 'undefined' ? Beautify(Math.floor(Game.heavenlyChips)) : Math.floor(Game.heavenlyChips),
+          'Prestige': typeof Beautify !== 'undefined' ? Beautify(Math.floor(Game.prestige)) : Math.floor(Game.prestige),
+          'On Ascend Screen': true
+        }
+      };
+    }
+
+    // Check if on a bot-owned ascension screen
     if (Game.OnAscend) {
       return {
         module: 'Ascension',

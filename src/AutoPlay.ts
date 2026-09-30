@@ -534,25 +534,14 @@ export default class AutoPlay {
   private hookLogic(): void {
     const Game = (globalThis as any).Game;
 
-    // Special handling for ascension screen - allow AscensionManager to run
-    if (Game.OnAscend) {
-      // Don't run if reincarnating (timer active)
-      if (Game.ReincarnateTimer > 0) return;
-
-      // Respect delay even on ascension screen
-      if (this.state.delay > 0) {
-        this.state.delay--;
-        return;
-      }
-      
-      this.measureModule('AscensionManager', () => this.ascensionManager.handleAscend());
-      return;
-    }
+    if (this.routeAscensionScreen(Game)) return;
 
     // Pause during ascension/reincarnation animations
     if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) {
       return;
     }
+
+    this.ascensionManager.resumeAfterManualAscension();
 
     this.tickCounter++;
     // const Game = (globalThis as any).Game; // Removed unused variable
@@ -823,6 +812,14 @@ export default class AutoPlay {
       return;
     }
 
+    // Route ascension screens before clicking or running any other modules.
+    if (this.routeAscensionScreen(Game)) {
+      this.updateTickStats(startTime);
+      return;
+    }
+
+    this.ascensionManager.resumeAfterManualAscension();
+
     // ===== Phase 1: Delay handling =====
     if (this.state.delay > 0) {
       this.state.delay--;
@@ -847,6 +844,24 @@ export default class AutoPlay {
 
     // Note: scheduleNextRun() is called at the START of periodic(), not here
     this.updateTickStats(startTime);
+  }
+
+  /**
+   * Keep every automation loop idle on an ascension screen except for the
+   * ownership-aware ascension handler. Preserve the existing bot delay before
+   * automatic reincarnation, while manual screens are reported immediately.
+   */
+  private routeAscensionScreen(Game: any): boolean {
+    if (!Game.OnAscend) return false;
+    if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) return true;
+
+    if (this.onAscend && this.state.delay > 0) {
+      this.state.delay--;
+      return true;
+    }
+
+    this.measureModule('AscensionManager', () => this.ascensionManager.handleAscend());
+    return true;
   }
 
   /**
