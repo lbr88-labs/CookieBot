@@ -30,14 +30,14 @@ assert.equal(runtimeUrl(beta, betaPath), `${pagesBase}/cookieAutoPlayBeta.js`);
 
 const typescriptPath = path.join(root, 'dist', 'CookieBot.user.js');
 const typescript = fs.readFileSync(typescriptPath, 'utf8');
-const typescriptVersion = '2.052-128';
+const typescriptVersion = require('../package.json').version;
 const typescriptUrl = `${pagesBase}/dist/CookieBot.user.js`;
-const payloadPath = path.join(root, 'dist', `cookieAutoPlayBeta-v${typescriptVersion}.js`);
+const payloadPath = path.join(root, 'dist', 'cookieAutoPlayBeta-latest.js');
 assert.equal(metadataValue(typescript, 'version'), typescriptVersion);
 assert.equal(metadataValue(typescript, 'updateURL'), typescriptUrl);
 assert.equal(metadataValue(typescript, 'downloadURL'), typescriptUrl);
 assert.equal(metadataValue(typescript, 'grant'), 'none');
-assert.equal(runtimeUrl(typescript, typescriptPath), `${pagesBase}/dist/cookieAutoPlayBeta-v${typescriptVersion}.js`);
-assert.ok(fs.existsSync(payloadPath), `versioned payload must exist: ${path.relative(root, payloadPath)}`);
+assert.equal(runtimeUrl(typescript, typescriptPath), `${pagesBase}/dist/cookieAutoPlayBeta-latest.js`);
+assert.ok(fs.existsSync(payloadPath), `stable payload must exist: ${path.relative(root, payloadPath)}`);
 
-console.log('Userscript metadata and runtime URLs match canonical Pages; versioned payload exists.');
+console.log('Userscript metadata and runtime URLs match canonical Pages; stable payload exists.');

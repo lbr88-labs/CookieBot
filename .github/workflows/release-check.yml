@@ -1,0 +1,22 @@
+name: Verify TypeScript release files
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  release-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run verify:release
+      - name: Reject stale generated release files
+        run: git diff --exit-code -- package.json package-lock.json src/AutoPlay.ts scripts/.last-build-hash dist

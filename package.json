@@ -1,10 +1,10 @@
 {
   "name": "cookiebot",
-  "version": "2.052-128",
+  "version": "2.052-129",
   "description": "Automated bot for Cookie Clicker game",
   "main": "dist/cookieAutoPlayBeta.js",
   "scripts": {
-    "build": "node scripts/bump-version.js && webpack --mode production && node scripts/post-build.js && node scripts/build-userscript.js",
+    "build": "node scripts/bump-version.js && webpack --mode production && node scripts/build-userscript.js",
     "cleanup": "node scripts/cleanup-builds.js",
     "dev": "webpack --mode development --watch",
     "type-check": "tsc --noEmit",
@@ -16,7 +16,8 @@
     "start:game": "node scripts/run-game.js",
     "start:game:firefox": "node scripts/run-game.js --firefox",
     "start:headless": "node scripts/run-game.js --headless",
-    "start:headless:firefox": "node scripts/run-game.js --headless --firefox"
+    "start:headless:firefox": "node scripts/run-game.js --headless --firefox",
+    "verify:release": "node tests/userscript_urls.test.js && node tests/stock_market_cooldown.test.js"
   },
   "keywords": [
     "cookie-clicker",

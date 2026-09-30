@@ -1,8 +1,8 @@
 # CookieBot TypeScript Experiment
 
-This is a separate experimental browser channel in the maintained `lbr88-labs/CookieBot` fork. Its Pages base is `https://lbr88-labs.github.io/CookieBot/`. It is not the root beta monolith or root beta userscript, and this document does not announce a release. The root beta userscript's update/download metadata and `Game.LoadMod` now use the canonical Pages URLs, but it has no browser runtime or save validation and no stable designation.
+This is a separate experimental browser channel in the maintained `lbr88-labs/CookieBot` fork. Its Pages base is `https://lbr88-labs.github.io/CookieBot/`. It is not the root beta monolith or root beta userscript, The root beta userscript's update/download metadata and `Game.LoadMod` now use the canonical Pages URLs, but it has no browser runtime or save validation and no stable designation.
 
-At the checked-in version `2.052-128`, the experimental userscript file is [`dist/CookieBot.user.js`](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js). It is intended to load the pinned `dist/cookieAutoPlayBeta-v2.052-128.js` bundle; it does not use the `latest` alias. The checked-in generated file and its generator now use canonical Pages URLs for update/download metadata and the pinned bundle request. This URL correction has no browser runtime or save validation, and the TypeScript userscript remains experimental with no stable designation. Existing users should manually install or replace it from [`https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js`](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js): the old `lbr88.github.io` `@updateURL` returns 404, so automatic updates from that host can fail.
+The experimental userscript is [`dist/CookieBot.user.js`](https://lbr88-labs.github.io/CookieBot/dist/CookieBot.user.js). It loads the current [`dist/cookieAutoPlayBeta-latest.js`](https://lbr88-labs.github.io/CookieBot/dist/cookieAutoPlayBeta-latest.js) bundle. These filenames stay the same across releases; the userscript metadata version advances so Violentmonkey can detect a new release. Both files must be published and verified together. Existing users whose `@updateURL` still points to the old `lbr88.github.io` host should manually reinstall from the linked userscript, because that old host returns 404. The TypeScript channel remains experimental; browser behavior and save compatibility need separate testing.
 
 ## Project structure
 
@@ -15,8 +15,8 @@ CookieBot/
 │   ├── AutoPlay.ts               # Main orchestrator
 │   └── index.ts                  # Entry point
 ├── dist/                         # Generated TypeScript bundles/userscript
-│   ├── cookieAutoPlayBeta-v{version}.js
-│   ├── cookieAutoPlayBeta-latest.js
+│   ├── cookieAutoPlayBeta-latest.js  # current compiled bundle
+│   ├── cookieAutoPlayBeta-v*.js     # historical pinned bundles
 │   └── CookieBot.user.js             # Experimental TypeScript userscript
 ├── cookieAutoPlayBeta.js         # Separate beta monolith
 ├── CookieBot.user.js             # Separate root beta userscript; embedded URLs use canonical Pages host
@@ -35,7 +35,7 @@ npm install
 # Generate dist/CookieBot.user.js from the current package version without a version bump
 node scripts/build-userscript.js
 
-# Versioning build: run version bump, compile a versioned bundle, update latest alias,
+# Release build: bump metadata version if source changed, compile the stable bundle,
 # and regenerate the TypeScript userscript
 npm run build
 
@@ -43,9 +43,13 @@ npm run dev          # watch build
 npm run type-check   # TypeScript checking only
 ```
 
-`node scripts/build-userscript.js` rewrites only `dist/CookieBot.user.js` and reads the current version from `package.json`. It does not compile the TypeScript bundle and does not bump the version. `npm run build` runs the change-detection version step first, then webpack, the latest-copy step, and userscript generation. The version step increments the numeric suffix when tracked source changes are detected.
+`node scripts/build-userscript.js` rewrites only `dist/CookieBot.user.js` and reads the current version from `package.json`. It does not compile the TypeScript bundle and does not bump the version. `npm run build` runs the change-detection version step first, then webpack and userscript generation. The version step increments the numeric suffix when tracked source changes are detected.
 
-Webpack emits `dist/cookieAutoPlayBeta-v{version}.js`. `scripts/post-build.js` copies that file to `dist/cookieAutoPlayBeta-latest.js`. The generated `dist/CookieBot.user.js` pins the matching versioned bundle, so it does not follow the `latest` alias. In this candidate, the root beta and experimental TypeScript userscripts both use canonical Pages URLs; neither has browser runtime or save validation or a stable designation. Keep the root beta monolith, root beta userscript, and experimental TypeScript userscript as separate channels, and install only one supported channel at a time.
+Webpack writes `dist/cookieAutoPlayBeta-latest.js` directly. The generated loader always requests that stable URL. Historical versioned bundles remain in the repository for old installed loaders; new releases do not create another versioned file. The root beta monolith and userscript are a separate channel. Install only one channel at a time.
+
+## Release gate
+
+A TypeScript source fix is released only after the rebuilt stable bundle and userscript are in the merged `master` commit, GitHub Pages has finished building that commit, and both public files match the commit bytes. The release issue stays open until this check passes; a code PR or completed unit test alone is not a deployed fix. The CI release check rebuilds the bundle and rejects stale checked-in output. `npm run verify:release` checks loader metadata, its stable URL, and the stock-market cooldown regression.
 
 ## Save and configuration caution
 

@@ -8955,6 +8955,13 @@ class AutoPlay_AutoPlay {
         this.state.poppingWrinklers = value;
     }
     get resetTime() {
+        const gameStartDate = globalThis.Game?.startDate;
+        if (typeof gameStartDate === 'number' &&
+            Number.isFinite(gameStartDate) &&
+            gameStartDate > 0 &&
+            gameStartDate <= Date.now()) {
+            return gameStartDate;
+        }
         return this.state.resetTime || this.state.now;
     }
     get cheatGolden() {
@@ -10030,7 +10037,7 @@ class AutoPlay_AutoPlay {
     }
 }
 // Version
-AutoPlay_AutoPlay.version = '2.052-128';
+AutoPlay_AutoPlay.version = '2.052-129';
 /* harmony default export */ const src_AutoPlay = (AutoPlay_AutoPlay);
 
 ;// ./src/index.ts

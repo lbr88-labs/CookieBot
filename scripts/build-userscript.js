@@ -58,8 +58,8 @@ const wrapper = `(function() {
 
     if (typeof Game !== 'undefined' && typeof Game.ready !== 'undefined' && Game.ready) {
       showStatus('Game ready, loading bot...');
-      // Load the compiled TypeScript version from dist (versioned file matches userscript version)
-      Game.LoadMod('${pagesBaseUrl}/dist/cookieAutoPlayBeta-v${packageJson.version}.js');
+      // Load the current TypeScript bundle from a stable Pages URL
+      Game.LoadMod('${pagesBaseUrl}/dist/cookieAutoPlayBeta-latest.js');
       clearInterval(readyCheck);
       setTimeout(() => showStatus('Bot loaded!'), 1000);
     }
