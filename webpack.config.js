@@ -1,10 +1,4 @@
 const path = require('path');
-const fs = require('fs');
-
-// Read version from package.json
-const packageJson = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
-const version = packageJson.version;
-
 module.exports = {
   entry: './src/index.ts',
   module: {
@@ -20,7 +14,7 @@ module.exports = {
     extensions: ['.tsx', '.ts', '.js'],
   },
   output: {
-    filename: `cookieAutoPlayBeta-v${version}.js`,
+    filename: 'cookieAutoPlayBeta-latest.js',
     path: path.resolve(__dirname, 'dist'),
     // Don't export as library - let index.ts handle global assignment
     // library: {
