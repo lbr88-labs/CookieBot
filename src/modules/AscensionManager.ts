@@ -757,7 +757,6 @@ export class AscensionManager {
       Game.ClosePrompt();
     }
 
-    this.context.onAscend = false;
     this.context.delay = 10;
     this.buyHeavenlyUpgrades();
 
@@ -775,6 +774,7 @@ export class AscensionManager {
     }
 
     Game.Reincarnate(true);
+    this.context.onAscend = false;
     this.state.resetTime = Date.now(); // save the current date for things that need to be delayed after reincarnating
 
     // Reset savings start time after reincarnation

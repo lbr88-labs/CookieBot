@@ -25,7 +25,7 @@ import { Logger } from './utils/Logger';
 
 export default class AutoPlay {
   // Version
-  static readonly version = '2.052-131';
+  static readonly version = '2.052-133';
 
   // State
   private config: AutoPlayConfig;
@@ -131,6 +131,9 @@ export default class AutoPlay {
 
   get deadline(): number { return this.state.deadline; }
   set deadline(value: number) { this.state.deadline = value; }
+
+  get delay(): number { return this.state.delay; }
+  set delay(value: number) { this.state.delay = value; }
 
   get now(): number { return this.state.now; }
   set now(value: number) { this.state.now = value; }
@@ -544,8 +547,8 @@ export default class AutoPlay {
 
     // Special handling for ascension screen - allow AscensionManager to run
     if (Game.OnAscend) {
-      // Don't run if reincarnating (timer active)
-      if (Game.ReincarnateTimer > 0) return;
+      // Don't handle the screen during the ascend or reincarnate animation.
+      if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) return;
 
       // Respect delay even on ascension screen
       if (this.state.delay > 0) {

@@ -3,7 +3,7 @@
  */
 import type { AutoPlayConfig, AutoPlayState } from './types/autoplay';
 export default class AutoPlay {
-    static readonly version = "2.052-131";
+    static readonly version = "2.052-133";
     private config;
     private state;
     Config: {
@@ -69,6 +69,8 @@ export default class AutoPlay {
     set nextPurchasePP(value: number | null);
     get deadline(): number;
     set deadline(value: number);
+    get delay(): number;
+    set delay(value: number);
     get now(): number;
     set now(value: number);
     get savingsGoal(): number;

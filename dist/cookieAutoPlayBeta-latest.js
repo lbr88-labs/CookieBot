@@ -5495,7 +5495,6 @@ class AscensionManager {
         if (Game.promptOn) {
             Game.ClosePrompt();
         }
-        this.context.onAscend = false;
         this.context.delay = 10;
         this.buyHeavenlyUpgrades();
         // Choose ascension mode
@@ -5510,6 +5509,7 @@ class AscensionManager {
             this.safeConfirm();
         }
         Game.Reincarnate(true);
+        this.context.onAscend = false;
         this.state.resetTime = Date.now(); // save the current date for things that need to be delayed after reincarnating
         // Reset savings start time after reincarnation
         if ('savingsStart' in this.state) {
@@ -9197,6 +9197,8 @@ class AutoPlay_AutoPlay {
     set nextPurchasePP(value) { this.state.nextPurchasePP = value; }
     get deadline() { return this.state.deadline; }
     set deadline(value) { this.state.deadline = value; }
+    get delay() { return this.state.delay; }
+    set delay(value) { this.state.delay = value; }
     get now() { return this.state.now; }
     set now(value) { this.state.now = value; }
     get savingsGoal() { return this.config.savingsGoal; }
@@ -9567,8 +9569,8 @@ class AutoPlay_AutoPlay {
         const Game = globalThis.Game;
         // Special handling for ascension screen - allow AscensionManager to run
         if (Game.OnAscend) {
-            // Don't run if reincarnating (timer active)
-            if (Game.ReincarnateTimer > 0)
+            // Don't handle the screen during the ascend or reincarnate animation.
+            if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0)
                 return;
             // Respect delay even on ascension screen
             if (this.state.delay > 0) {
@@ -10328,7 +10330,7 @@ class AutoPlay_AutoPlay {
     }
 }
 // Version
-AutoPlay_AutoPlay.version = '2.052-131';
+AutoPlay_AutoPlay.version = '2.052-133';
 /* harmony default export */ const src_AutoPlay = (AutoPlay_AutoPlay);
 
 ;// ./src/index.ts
