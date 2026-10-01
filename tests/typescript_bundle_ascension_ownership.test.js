@@ -27,6 +27,11 @@ const hookLogicMethod = autoPlayClass.members.find(member =>
 );
 assert(hookLogicMethod, 'The experimental TypeScript bundle must contain AutoPlay.hookLogic.');
 
+const playerOwnershipMethod = autoPlayClass.members.find(member =>
+  ts.isMethodDeclaration(member) && member.name.getText(bundleAst) === 'isPlayerOwnedAscension'
+);
+assert(playerOwnershipMethod, 'The experimental TypeScript bundle must contain the shared player-ownership guard.');
+
 const delayGetter = autoPlayClass.members.find(member =>
   ts.isGetAccessorDeclaration(member) && member.name.getText(bundleAst) === 'delay'
 );
@@ -46,10 +51,18 @@ function createBundledAscensionManager(Game, context) {
 }
 
 const hookLogicSource = bundle.slice(hookLogicMethod.getStart(bundleAst), hookLogicMethod.end);
+const playerOwnershipSource = bundle.slice(playerOwnershipMethod.getStart(bundleAst), playerOwnershipMethod.end);
 function createBundledHookLogic(Game) {
-  return vm.runInNewContext(`({${hookLogicSource}}).hookLogic`, {
+  const methods = vm.runInNewContext(`({${playerOwnershipSource}, ${hookLogicSource}})`, {
     globalThis: { Game }
   });
+
+  return function() {
+    const context = Object.assign(Object.create(this), {
+      isPlayerOwnedAscension: methods.isPlayerOwnedAscension
+    });
+    return methods.hookLogic.call(context);
+  };
 }
 
 const delayAccessorSource = bundle.slice(delayGetter.getStart(bundleAst), delayGetter.end) + ', ' +

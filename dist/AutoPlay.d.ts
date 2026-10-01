@@ -44,6 +44,9 @@ export default class AutoPlay {
     onAscend: boolean;
     loggingInfo: string | number;
     private tickCounter;
+    private runtimeInitialized;
+    private startupAutomationPending;
+    private startupAutomationInitialized;
     kittens: number[];
     cursors: number[];
     maxBuildings: number[];
@@ -134,6 +137,16 @@ export default class AutoPlay {
      * Initialize the bot
      */
     init(): void;
+    /**
+     * An open ascend screen belongs to the player unless this runtime initiated
+     * the current ascent with Game.Ascend(true).
+     */
+    private isPlayerOwnedAscension;
+    /**
+     * Run side-effectful startup planning once the game is outside an ascend
+     * screen and its transition timers have cleared.
+     */
+    private initializeStartupAutomation;
     /**
      * Register the bot as a native game mod
      */

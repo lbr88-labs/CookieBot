@@ -9335,6 +9335,9 @@ class AutoPlay_AutoPlay {
         this.onAscend = false; // Flag to prevent duplicate ascension calls
         this.loggingInfo = 0;
         this.tickCounter = 0; // For native mod hook scheduling
+        this.runtimeInitialized = false;
+        this.startupAutomationPending = false;
+        this.startupAutomationInitialized = false;
         // Permanent slot arrays
         this.kittens = [31, 32, 54, 108, 187, 320, 321, 322, 425, 442, 462, 494, 613, 766, 865];
         this.cursors = [0, 1, 2, 3, 4, 5, 6, 43, 82, 109, 188, 189, 660, 764, 873];
@@ -9493,15 +9496,17 @@ class AutoPlay_AutoPlay {
      * Initialize the bot
      */
     init() {
-        if (this.state.isInitialized) {
+        if (this.runtimeInitialized) {
             console.log('CookieBot already initialized');
             return;
         }
         console.log(`CookieBot v${AutoPlay_AutoPlay.version} initializing...`);
         // Load saved configuration
         this.loadConfig();
-        // Find first achievement to work on
-        this.achievementHandler.findNextAchievement();
+        // Startup goal discovery and purchase planning can have gameplay side
+        // effects. Defer both while an ascend screen or transition is active.
+        this.startupAutomationPending = true;
+        this.initializeStartupAutomation();
         // Create dashboard UI
         this.dashboard.createDashboard();
         this.dashboard.updateDashboard();
@@ -9511,15 +9516,6 @@ class AutoPlay_AutoPlay {
         }, 1000);
         // Hook into Game.UpdateMenu to add config options to preferences
         this.setupMenuHook();
-        // Do an initial bestBuy check to populate purchase info for dashboard
-        this.purchaseManager.bestBuy();
-        const purchaseInfo = this.purchaseManager.getPurchaseInfo();
-        if (purchaseInfo) {
-            this.state.nextPurchase = purchaseInfo.name;
-            this.state.nextPurchaseType = purchaseInfo.type;
-            this.state.nextPurchasePP = purchaseInfo.pp;
-            this.state.nextPurchasePrice = purchaseInfo.price;
-        }
         // Check if we should use native game hooks or legacy timer
         if (this.Config.UseGameHooks === 1) {
             this.registerGameMod();
@@ -9528,8 +9524,42 @@ class AutoPlay_AutoPlay {
             // Set up periodic execution
             this.scheduleNextRun();
         }
-        this.state.isInitialized = true;
+        this.runtimeInitialized = true;
         console.log('CookieBot initialized successfully');
+    }
+    /**
+     * An open ascend screen belongs to the player unless this runtime initiated
+     * the current ascent with Game.Ascend(true).
+     */
+    isPlayerOwnedAscension() {
+        const Game = globalThis.Game;
+        return Boolean(Game && Game.OnAscend && !this.onAscend);
+    }
+    /**
+     * Run side-effectful startup planning once the game is outside an ascend
+     * screen and its transition timers have cleared.
+     */
+    initializeStartupAutomation() {
+        if (this.startupAutomationInitialized || !this.startupAutomationPending)
+            return;
+        const Game = globalThis.Game;
+        if (!Game || Game.OnAscend || Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) {
+            this.startupAutomationPending = true;
+            return;
+        }
+        this.startupAutomationPending = false;
+        this.achievementHandler.findNextAchievement();
+        // Populate purchase info for the dashboard after gameplay is safe to run.
+        this.purchaseManager.bestBuy();
+        const purchaseInfo = this.purchaseManager.getPurchaseInfo();
+        if (purchaseInfo) {
+            this.state.nextPurchase = purchaseInfo.name;
+            this.state.nextPurchaseType = purchaseInfo.type;
+            this.state.nextPurchasePP = purchaseInfo.pp;
+            this.state.nextPurchasePrice = purchaseInfo.price;
+        }
+        this.startupAutomationInitialized = true;
+        this.state.isInitialized = true;
     }
     /**
      * Register the bot as a native game mod
@@ -9567,7 +9597,11 @@ class AutoPlay_AutoPlay {
      */
     hookLogic() {
         const Game = globalThis.Game;
-        // Special handling for ascension screen - allow AscensionManager to run
+        // This must precede delay, tick, stats, or gameplay state updates. Keep
+        // the native hook registered so normal work can resume after player exit.
+        if (this.isPlayerOwnedAscension())
+            return;
+        // Only the live runtime that initiated this ascent may handle its screen.
         if (Game.OnAscend) {
             // Don't handle the screen during the ascend or reincarnate animation.
             if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0)
@@ -9584,6 +9618,7 @@ class AutoPlay_AutoPlay {
         if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) {
             return;
         }
+        this.initializeStartupAutomation();
         this.tickCounter++;
         // const Game = (globalThis as any).Game; // Removed unused variable
         // Update time
@@ -9618,6 +9653,8 @@ class AutoPlay_AutoPlay {
      * Native reincarnate hook - runs after ascension
      */
     hookReincarnate() {
+        if (this.isPlayerOwnedAscension())
+            return;
         this.info('CookieBot detected reincarnation. Resetting state.');
         this.state = this.getDefaultState();
         this.state.isInitialized = true;
@@ -9806,14 +9843,31 @@ class AutoPlay_AutoPlay {
     periodic() {
         // Schedule next run FIRST so it always continues regardless of early returns
         this.scheduleNextRun();
-        const startTime = performance.now();
         // Declare Game global
         const Game = globalThis.Game;
+        // Do not decrement delay or update tick statistics while the player owns
+        // the screen. The recurring timeout remains scheduled for player exit.
+        if (this.isPlayerOwnedAscension())
+            return;
+        const startTime = performance.now();
+        // Bot-owned ascension screens are handled exclusively by the ascension
+        // manager; ordinary click, minigame, and slow logic stays paused.
+        if (Game.OnAscend) {
+            if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0)
+                return;
+            if (this.state.delay > 0) {
+                this.state.delay--;
+                return;
+            }
+            this.measureModule('AscensionManager', () => this.ascensionManager.handleAscend());
+            return;
+        }
         // ===== Phase 0: Early exits for timers =====
         if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) {
             this.updateTickStats(startTime);
             return;
         }
+        this.initializeStartupAutomation();
         // ===== Phase 1: Delay handling =====
         if (this.state.delay > 0) {
             this.state.delay--;
@@ -10293,6 +10347,9 @@ class AutoPlay_AutoPlay {
         this.state = this.getDefaultState();
         this.config = this.getDefaultConfig();
         this.state.isInitialized = false;
+        this.runtimeInitialized = false;
+        this.startupAutomationPending = false;
+        this.startupAutomationInitialized = false;
         console.log('CookieBot reset to default state.');
     }
     /**
