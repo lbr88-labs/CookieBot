@@ -15,12 +15,32 @@ interface AscensionState {
   resetTime: number;
 }
 
-type AscensionWaitBlocker = 'plant' | 'Sugar frenzy' | 'Sugar blessing';
+type AscensionWaitBlocker = 'prestige' | 'animation' | 'night mode' | 'plant' | 'Sugar frenzy' | 'Sugar blessing';
 
 interface PendingAscensionDecision {
   reason: string;
   blocker: AscensionWaitBlocker;
+  achievementIntent: boolean;
 }
+
+export interface AchievementAscensionIntent {
+  version: 1;
+  state: 'armed' | 'due';
+  targetId: number;
+  run: {
+    startDate: number;
+    fullDate: number;
+    resets: number;
+  };
+}
+
+interface AchievementAscensionRun {
+  startDate: number;
+  fullDate: number;
+  resets: number;
+}
+
+const ACHIEVEMENT_ASCENSION_INTENT_KEY = 'CookieBot_AchievementAscensionIntent_v1';
 
 // Priority upgrades for heavenly cookie purchases
 const PRIO_UPGRADES = [363, 323, 411, 412, 413, 264, 265, 266, 267, 268, 520, 181, 282, 283, 284, 291, 393, 394];
@@ -29,6 +49,10 @@ export class AscensionManager {
   private state: AscensionState;
   private context: AutoPlayContext;
   private pendingAscension: PendingAscensionDecision | null = null;
+  private achievementAscensionIntent: AchievementAscensionIntent | null = null;
+  private achievementAscensionIntentLoaded = false;
+  private achievementAscensionStorageWarningLogged = false;
+  private achievementAscensionCallStarted = false;
 
   constructor(context: AutoPlayContext) {
     this.context = context;
@@ -83,11 +107,15 @@ export class AscensionManager {
    * Checks achievements, prestige levels, and decides when to ascend
    */
   handleAscend(): void {
+    // A manually opened ascend screen remains player-owned until the player reincarnates.
+    if (Game.OnAscend && !this.context.onAscend) return;
+
     // Each pass reevaluates whether an ascension decision is still pending.
     this.pendingAscension = null;
 
     // Check for newly won achievements
     this.checkAchievements();
+    const achievementIntent = this.getAchievementAscensionIntent();
 
     // Handle reincarnation if we're on the ascend screen
     if (Game.OnAscend) {
@@ -100,6 +128,10 @@ export class AscensionManager {
       return;
     }
 
+    // Do not let the ascension timer path call Game.Ascend a second time after
+    // a successful achievement-triggered call.
+    if (this.achievementAscensionCallStarted) return;
+
     // Continue ascension process if timer is ready
     if (this.context.onAscend && Game.AscendTimer === 0) {
       Game.Ascend(true);
@@ -110,9 +142,16 @@ export class AscensionManager {
       this.canContinue(); // update achievement goals
     }
 
+    if (achievementIntent && achievementIntent.state === 'due') {
+      this.handleAchievementWon(achievementIntent.targetId, true);
+      return;
+    }
+
     // Check if target achievement was won
     if (Game.AchievementsById[this.context.nextAchievement].won) {
-      this.handleAchievementWon();
+      // Old saves may already contain a won target without CookieBot's armed
+      // marker. Move on to the next goal rather than inferring an ascent.
+      this.context.findNextAchievement();
       return;
     }
 
@@ -179,24 +218,8 @@ export class AscensionManager {
   /**
    * Handle when the target achievement is won
    */
-  private handleAchievementWon(): void {
-    const achiev = Game.AchievementsById[this.context.nextAchievement];
-    this.context.logStatus('achievement', 'Unlocked: ' + achiev.name);
-
-    // Check if this is first ascension and if we should wait for 365+ prestige
-    const isFirstRun = (Game.prestige === 0);
-    const currentPrestige = Game.ascendMeterLevel;
-    const isHardcoreAchievement = (
-      achiev.id === Game.AchievementsById[ACHIEVEMENT_IDS.HARDCORE].id ||
-      achiev.id === Game.AchievementsById[ACHIEVEMENT_IDS.NEVERCLICK].id ||
-      achiev.id === Game.AchievementsById[ACHIEVEMENT_IDS.TRUE_NEVERCLICK].id
-    );
-
-    if (isFirstRun && currentPrestige < 365 && !isHardcoreAchievement) {
-      // Don't ascend yet - need to reach 365+ prestige for first ascension
-      this.context.logStatus('prestige', 'Waiting for 365+ prestige before first ascension (currently ' + Math.floor(currentPrestige) + ')');
-      return;
-    }
+  private handleAchievementWon(targetId: number, hasPersistentIntent: boolean): void {
+    const achiev = Game.AchievementsById[targetId];
 
     const date = new Date();
     date.setTime(this.context.now - Game.startDate);
@@ -204,11 +227,202 @@ export class AscensionManager {
     date.setTime(this.context.now - Game.fullDate);
     const fullTime = Game.sayTime(date.getTime() / 1000 * Game.fps, -1);
 
-    this.doAscend(
-      "have achievement: " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '') +
-      " after " + legacyTime + "(total: " + fullTime + ")",
-      true
-    );
+    const reason = "have achievement: " + achiev.ddesc.replace(/<q>.*?<\/q>/ig, '') +
+      " after " + legacyTime + "(total: " + fullTime + ")";
+
+    // Check if this is first ascension and if we should wait for 365+ prestige
+    const isFirstRun = (Game.prestige === 0);
+    const currentPrestige = Game.ascendMeterLevel;
+    const isHardcoreAchievement = this.isHardcoreAchievement(targetId);
+
+    if (isFirstRun && currentPrestige < 365 && !isHardcoreAchievement) {
+      // Don't ascend yet - need to reach 365+ prestige for first ascension
+      if (hasPersistentIntent) this.pendingAscension = { reason, blocker: 'prestige', achievementIntent: true };
+      this.context.logStatus('prestige', 'Waiting for 365+ prestige before first ascension (currently ' + Math.floor(currentPrestige) + ')');
+      return;
+    }
+
+    if (hasPersistentIntent) {
+      this.context.wantAscend = this.context.plantPending;
+      const waitReason = this.getAchievementAscensionWaitReason();
+      if (waitReason) {
+        this.context.logStatus('ascend:waiting', waitReason);
+        const blocker = this.getLiveAscensionWaitBlocker(true);
+        if (blocker) {
+          this.pendingAscension = { reason, blocker, achievementIntent: true };
+          this.context.wantAscend = blocker === 'plant';
+        }
+        return;
+      }
+    }
+
+    this.doAscend(reason, true, hasPersistentIntent);
+  }
+
+  /**
+   * Read and validate CookieBot's small run-bound achievement intent marker.
+   * A won bit without this marker never becomes an ascension decision.
+   */
+  getAchievementAscensionIntent(): AchievementAscensionIntent | null {
+    if (!this.achievementAscensionIntentLoaded) {
+      this.achievementAscensionIntentLoaded = true;
+      const storage = this.getAchievementAscensionStorage();
+      if (!storage) {
+        this.warnAchievementAscensionStorageUnavailable();
+      } else {
+        let savedIntent: string | null = null;
+        try {
+          savedIntent = storage.getItem(ACHIEVEMENT_ASCENSION_INTENT_KEY);
+        } catch (_error) {
+          this.achievementAscensionIntent = null;
+          this.removeAchievementAscensionStorage(storage);
+          this.warnAchievementAscensionStorageUnavailable();
+        }
+
+        if (savedIntent !== null) {
+          try {
+            const parsed = JSON.parse(savedIntent);
+            this.achievementAscensionIntent = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+              ? parsed as AchievementAscensionIntent
+              : null;
+            if (!this.achievementAscensionIntent) this.removeAchievementAscensionStorage(storage);
+          } catch (_error) {
+            this.achievementAscensionIntent = null;
+            this.removeAchievementAscensionStorage(storage);
+          }
+        }
+      }
+    }
+
+    const intent = this.achievementAscensionIntent;
+    if (!intent) return null;
+
+    const run = this.getAchievementAscensionRun();
+    const savedRun = intent.run as AchievementAscensionRun | null;
+    const target = this.getAchievementAscensionTarget(intent.targetId);
+    if (intent.version !== 1 || (intent.state !== 'armed' && intent.state !== 'due') ||
+        !run || !savedRun || !this.isFiniteRun(savedRun) ||
+        savedRun.startDate !== run.startDate || savedRun.fullDate !== run.fullDate ||
+        savedRun.resets !== run.resets || !target ||
+        (intent.state === 'due' && !target.won)) {
+      this.clearAchievementAscensionIntent();
+      return null;
+    }
+
+    if (intent.state === 'armed' && target.won) {
+      intent.state = 'due';
+      this.persistAchievementAscensionIntent(intent);
+    }
+    return intent;
+  }
+
+  /** Arm the current unearned goal unless a due intent already has priority. */
+  armAchievementAscensionIntent(targetId: number): AchievementAscensionIntent | null {
+    const intent = this.getAchievementAscensionIntent();
+    if (intent?.state === 'due') return intent;
+
+    const target = this.getAchievementAscensionTarget(targetId);
+    const run = this.getAchievementAscensionRun();
+    if (!target || target.won || !run) return null;
+    if (intent?.state === 'armed' && intent.targetId === targetId) return intent;
+
+    const nextIntent: AchievementAscensionIntent = {
+      version: 1,
+      state: 'armed',
+      targetId,
+      run
+    };
+    this.persistAchievementAscensionIntent(nextIntent);
+    return nextIntent;
+  }
+
+  /** Clear the marker only after the game accepted the ascent or it is invalid. */
+  clearAchievementAscensionIntent(): void {
+    this.achievementAscensionIntent = null;
+    this.achievementAscensionIntentLoaded = true;
+    const storage = this.getAchievementAscensionStorage();
+    if (!storage) {
+      this.warnAchievementAscensionStorageUnavailable(
+        'CookieBot could not remove the achievement ascent marker from localStorage.');
+      return;
+    }
+    this.removeAchievementAscensionStorage(storage);
+  }
+
+  private getAchievementAscensionRun(): AchievementAscensionRun | null {
+    const run = {
+      startDate: Game.startDate,
+      fullDate: Game.fullDate,
+      resets: Game.resets
+    };
+    return this.isFiniteRun(run) ? run : null;
+  }
+
+  private isFiniteRun(run: AchievementAscensionRun): boolean {
+    return typeof run.startDate === 'number' && Number.isFinite(run.startDate) &&
+      typeof run.fullDate === 'number' && Number.isFinite(run.fullDate) &&
+      typeof run.resets === 'number' && Number.isFinite(run.resets);
+  }
+
+  private getAchievementAscensionTarget(targetId: number): any | null {
+    if (typeof targetId !== 'number' || !Number.isFinite(targetId) ||
+        Math.floor(targetId) !== targetId || !Game.AchievementsById) return null;
+    const target = Game.AchievementsById[targetId];
+    if (!target || target.id !== targetId ||
+        (target.won !== true && target.won !== false && target.won !== 0 && target.won !== 1) ||
+        typeof target.name !== 'string' || typeof target.ddesc !== 'string') return null;
+    return target;
+  }
+
+  private getAchievementAscensionStorage(): Storage | null {
+    try {
+      if (typeof window === 'undefined') return null;
+      return window.localStorage || null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  private persistAchievementAscensionIntent(intent: AchievementAscensionIntent): void {
+    this.achievementAscensionIntent = intent;
+    const storage = this.getAchievementAscensionStorage();
+    if (!storage) {
+      this.warnAchievementAscensionStorageUnavailable();
+      return;
+    }
+    try {
+      storage.setItem(ACHIEVEMENT_ASCENSION_INTENT_KEY, JSON.stringify(intent));
+    } catch (_error) {
+      this.warnAchievementAscensionStorageUnavailable();
+    }
+  }
+
+  private removeAchievementAscensionStorage(storage: Storage): void {
+    try {
+      storage.removeItem(ACHIEVEMENT_ASCENSION_INTENT_KEY);
+    } catch (_error) {
+      this.warnAchievementAscensionStorageUnavailable();
+    }
+  }
+
+  private warnAchievementAscensionStorageUnavailable(
+    message = 'Achievement ascent intent is session-only because localStorage is unavailable.'): void {
+    if (this.achievementAscensionStorageWarningLogged) return;
+    this.achievementAscensionStorageWarningLogged = true;
+    this.context.logStatus('ascend:waiting', message);
+  }
+
+  private getAchievementAscensionWaitReason(): string {
+    if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0 || this.context.onAscend) {
+      return 'Waiting for the current ascension animation to finish.';
+    }
+    if (this.context.Config.NightMode > 0 && this.context.preNightMode()) {
+      return 'Waiting until night mode ends before ascending.';
+    }
+    if (this.context.plantPending) return 'Waiting for the pending garden plant before ascending.';
+    if (Game.hasBuff('Sugar frenzy')) return 'Waiting for Sugar frenzy to end before ascending.';
+    if (Game.hasBuff('Sugar blessing')) return 'Waiting for Sugar blessing to end before ascending.';
+    return '';
   }
 
   /**
@@ -423,7 +637,7 @@ export class AscensionManager {
   /**
    * Perform the actual ascension
    */
-  private doAscend(reason: string, log: boolean = false): void {
+  private doAscend(reason: string, log: boolean = false, achievementIntent: boolean = false): void {
     this.pendingAscension = null;
     if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0) return;
     if (this.context.onAscend || Game.OnAscend) return;
@@ -433,15 +647,15 @@ export class AscensionManager {
     // Record only the selected decision and the live guard that deferred it.
     // Do not close prompts or start any ascension preparation while waiting.
     if (this.context.wantAscend) {
-      this.pendingAscension = { reason, blocker: 'plant' };
+      this.pendingAscension = { reason, blocker: 'plant', achievementIntent };
       return;
     }
     if (Game.hasBuff("Sugar frenzy")) {
-      this.pendingAscension = { reason, blocker: 'Sugar frenzy' };
+      this.pendingAscension = { reason, blocker: 'Sugar frenzy', achievementIntent };
       return;
     }
     if (Game.hasBuff("Sugar blessing")) {
-      this.pendingAscension = { reason, blocker: 'Sugar blessing' };
+      this.pendingAscension = { reason, blocker: 'Sugar blessing', achievementIntent };
       return;
     }
 
@@ -485,9 +699,9 @@ export class AscensionManager {
       Game.ObjectsById.forEach((e: any) => { e.sell(e.amount); });
       Game.UpgradesById[UPGRADE_IDS.CHOCOLATE_EGG].buy();
       this.context.delay = 10;
+      if (achievementIntent) this.context.logStatus('ascend:waiting',
+        'Preparing the Chocolate egg before ascending.');
     } else {
-      this.context.info(reason);
-
       // Capture prestige values before the game changes ascension state.
       const currentPrestige = Game.prestige;
       const prestigeGain = Game.ascendMeterLevel;
@@ -500,11 +714,24 @@ export class AscensionManager {
         this.context.loggingInfo = reason;
       }
 
-      // Call logging before ascension if available
+      if (achievementIntent) this.achievementAscensionCallStarted = true;
+      try {
+        Game.Ascend(true);
+      } catch (error) {
+        this.context.loggingInfo = 0;
+        if (achievementIntent) {
+          this.achievementAscensionCallStarted = false;
+          this.context.logStatus('ascend:waiting',
+            'Ascension call failed; achievement intent retained for retry.');
+          return;
+        }
+        throw error;
+      }
+      if (achievementIntent) this.clearAchievementAscensionIntent();
+      this.context.info(reason);
       if (typeof this.context.logging === 'function') {
         this.context.logging();
       }
-      Game.Ascend(true);
       this.context.onAscend = true;
       this.context.logStatus('ascend', reason);
       this.context.addActivity("Ascension started.");
@@ -523,13 +750,13 @@ export class AscensionManager {
    */
   private doReincarnate(): void {
     this.pendingAscension = null;
+    this.achievementAscensionCallStarted = false;
 
     // Close any open prompts before reincarnating
     if (Game.promptOn) {
       Game.ClosePrompt();
     }
 
-    this.context.onAscend = false;
     this.context.delay = 10;
     this.buyHeavenlyUpgrades();
 
@@ -547,6 +774,7 @@ export class AscensionManager {
     }
 
     Game.Reincarnate(true);
+    this.context.onAscend = false;
     this.state.resetTime = Date.now(); // save the current date for things that need to be delayed after reincarnating
 
     // Reset savings start time after reincarnation
@@ -673,7 +901,7 @@ export class AscensionManager {
     }
 
     if (this.pendingAscension) {
-      const blocker = this.getLiveAscensionWaitBlocker();
+      const blocker = this.getLiveAscensionWaitBlocker(this.pendingAscension.achievementIntent);
       if (!blocker) {
         this.pendingAscension = null;
       } else {
@@ -816,10 +1044,24 @@ export class AscensionManager {
     };
   }
 
-  private getLiveAscensionWaitBlocker(): AscensionWaitBlocker | null {
+  private getLiveAscensionWaitBlocker(achievementIntent: boolean): AscensionWaitBlocker | null {
+    const intentTargetId = achievementIntent
+      ? this.getAchievementAscensionIntent()?.targetId
+      : undefined;
+    const targetId = intentTargetId ?? this.context.nextAchievement;
+    if (achievementIntent && Game.prestige === 0 && Game.ascendMeterLevel < 365 &&
+      !this.isHardcoreAchievement(targetId)) return 'prestige';
+    if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0 || this.context.onAscend) return 'animation';
+    if (this.context.Config.NightMode > 0 && this.context.preNightMode()) return 'night mode';
     if (this.context.plantPending) return 'plant';
     if (Game.hasBuff('Sugar frenzy')) return 'Sugar frenzy';
     if (Game.hasBuff('Sugar blessing')) return 'Sugar blessing';
     return null;
+  }
+
+  private isHardcoreAchievement(targetId: number): boolean {
+    return targetId === ACHIEVEMENT_IDS.HARDCORE ||
+      targetId === ACHIEVEMENT_IDS.NEVERCLICK ||
+      targetId === ACHIEVEMENT_IDS.TRUE_NEVERCLICK;
   }
 }

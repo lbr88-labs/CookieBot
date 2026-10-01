@@ -3,7 +3,7 @@
  */
 import type { AutoPlayConfig, AutoPlayState } from './types/autoplay';
 export default class AutoPlay {
-    static readonly version = "2.052-130";
+    static readonly version = "2.052-134";
     private config;
     private state;
     Config: {
@@ -44,6 +44,9 @@ export default class AutoPlay {
     onAscend: boolean;
     loggingInfo: string | number;
     private tickCounter;
+    private runtimeInitialized;
+    private startupAutomationPending;
+    private startupAutomationInitialized;
     kittens: number[];
     cursors: number[];
     maxBuildings: number[];
@@ -69,6 +72,8 @@ export default class AutoPlay {
     set nextPurchasePP(value: number | null);
     get deadline(): number;
     set deadline(value: number);
+    get delay(): number;
+    set delay(value: number);
     get now(): number;
     set now(value: number);
     get savingsGoal(): number;
@@ -113,6 +118,8 @@ export default class AutoPlay {
      * Find next achievement to target (delegates to AchievementHandler)
      */
     findNextAchievement(): void;
+    getAchievementAscensionIntent(): import("./modules/AscensionManager").AchievementAscensionIntent | null;
+    armAchievementAscensionIntent(targetId: number): import("./modules/AscensionManager").AchievementAscensionIntent | null;
     constructor();
     /**
      * Trigger ascension (delegates to AscensionManager)
@@ -130,6 +137,16 @@ export default class AutoPlay {
      * Initialize the bot
      */
     init(): void;
+    /**
+     * An open ascend screen belongs to the player unless this runtime initiated
+     * the current ascent with Game.Ascend(true).
+     */
+    private isPlayerOwnedAscension;
+    /**
+     * Run side-effectful startup planning once the game is outside an ascend
+     * screen and its transition timers have cleared.
+     */
+    private initializeStartupAutomation;
     /**
      * Register the bot as a native game mod
      */

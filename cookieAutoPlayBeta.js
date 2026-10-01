@@ -64,6 +64,14 @@ AutoPlay.lastStatus = {}; // Track last status to avoid duplicates
 
 AutoPlay.run = function() {
   if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
+  // Ascension screens are player-owned unless this run called Game.Ascend.
+  // Route before clicks, purchases, minigames, and periodic state changes.
+  if (Game.OnAscend || AutoPlay.onAscend) {
+    if (AutoPlay.onAscend && AutoPlay.delay>0) { AutoPlay.delay--; return; }
+    AutoPlay.handleAscend();
+    return;
+  }
+  AutoPlay.resumeAfterManualAscension();
   if (AutoPlay.delay>0) { AutoPlay.delay--; return; }
   AutoPlay.now=Date.now();
   if (AutoPlay.nextAchievement==397) { AutoPlay.runJustRight(); return; }
@@ -1646,7 +1654,9 @@ AutoPlay.findNextWrinkler = function() {
 
 //===================== Handle Small Achievements ==========================
 AutoPlay.backupHeight = 0;
-if (Game.bakeryName.slice(0,AutoPlay.robotName.length)==AutoPlay.robotName) {
+// A loaded ascension screen belongs to the player, including its bakery-name
+// prompt. Do not consume the bot prefix until normal play resumes.
+if (!Game.OnAscend && Game.bakeryName.slice(0,AutoPlay.robotName.length)==AutoPlay.robotName) {
   Game.bakeryName = Game.bakeryName.slice(AutoPlay.robotName.length,Game.bakeryName.length);
   Game.bakeryNamePrompt(); Game.ConfirmPrompt();
 }
@@ -1755,6 +1765,153 @@ AutoPlay.ascendLimit = 0.9*Math.floor(2*(1-Game.ascendMeterPercent));
 AutoPlay.wantAscend = false;
 AutoPlay.onAscend = false;
 AutoPlay.loggedAchievements = {}; // Track which achievements we've already logged
+AutoPlay.manualAscensionRun = undefined;
+AutoPlay.manualAscensionWaitReported = false;
+AutoPlay.achievementAscensionIntentKey = 'CookieBot_AchievementAscensionIntent_v1';
+if (typeof AutoPlay.achievementAscensionIntent === 'undefined')
+  AutoPlay.achievementAscensionIntent = null;
+if (typeof AutoPlay.achievementAscensionIntentLoaded === 'undefined')
+  AutoPlay.achievementAscensionIntentLoaded = false;
+AutoPlay.achievementAscensionCallStarted = false;
+
+AutoPlay.getAchievementAscensionRun = function() {
+  if (typeof Game.startDate !== 'number' || !isFinite(Game.startDate) ||
+      typeof Game.fullDate !== 'number' || !isFinite(Game.fullDate) ||
+      typeof Game.resets !== 'number' || !isFinite(Game.resets)) return null;
+  return {
+    startDate: Game.startDate,
+    fullDate: Game.fullDate,
+    resets: Game.resets
+  };
+}
+
+AutoPlay.getAchievementAscensionTarget = function(targetId) {
+  if (typeof targetId !== 'number' || !isFinite(targetId) ||
+      Math.floor(targetId) !== targetId || !Game.AchievementsById) return null;
+  var target = Game.AchievementsById[targetId];
+  if (!target || target.id !== targetId ||
+      (target.won !== true && target.won !== false && target.won !== 0 && target.won !== 1) ||
+      typeof target.name !== 'string' || typeof target.ddesc !== 'string') return null;
+  return target;
+}
+
+AutoPlay.persistAchievementAscensionIntent = function(intent) {
+  AutoPlay.achievementAscensionIntent = intent;
+  try {
+    window.localStorage.setItem(AutoPlay.achievementAscensionIntentKey,
+      JSON.stringify(intent));
+  } catch (e) {
+    AutoPlay.logStatus('ascend:waiting',
+      'Achievement ascent intent is session-only because localStorage is unavailable.');
+  }
+}
+
+AutoPlay.clearAchievementAscensionIntent = function() {
+  AutoPlay.achievementAscensionIntent = null;
+  AutoPlay.achievementAscensionIntentLoaded = true;
+  try {
+    window.localStorage.removeItem(AutoPlay.achievementAscensionIntentKey);
+  } catch (e) {
+    AutoPlay.logStatus('ascend:waiting',
+      'CookieBot could not remove the achievement ascent marker from localStorage.');
+  }
+}
+
+AutoPlay.getAchievementAscensionIntent = function() {
+  if (!AutoPlay.achievementAscensionIntentLoaded) {
+    AutoPlay.achievementAscensionIntentLoaded = true;
+    try {
+      var savedIntent = window.localStorage.getItem(
+        AutoPlay.achievementAscensionIntentKey);
+      if (savedIntent !== null) {
+        AutoPlay.achievementAscensionIntent = JSON.parse(savedIntent);
+        if (!AutoPlay.achievementAscensionIntent ||
+            typeof AutoPlay.achievementAscensionIntent !== 'object' ||
+            Array.isArray(AutoPlay.achievementAscensionIntent))
+          AutoPlay.clearAchievementAscensionIntent();
+      }
+    } catch (e) {
+      AutoPlay.achievementAscensionIntent = null;
+      try {
+        window.localStorage.removeItem(AutoPlay.achievementAscensionIntentKey);
+      } catch (removeError) {}
+      AutoPlay.logStatus('ascend:waiting',
+        'Achievement ascent intent is session-only because localStorage is unavailable.');
+    }
+  }
+
+  var intent = AutoPlay.achievementAscensionIntent;
+  if (!intent) return null;
+  var run = AutoPlay.getAchievementAscensionRun();
+  var target = AutoPlay.getAchievementAscensionTarget(intent.targetId);
+  var savedRun = intent.run;
+  if (intent.version !== 1 || (intent.state !== 'armed' && intent.state !== 'due') ||
+      !run || !savedRun || typeof savedRun.startDate !== 'number' ||
+      !isFinite(savedRun.startDate) || typeof savedRun.fullDate !== 'number' ||
+      !isFinite(savedRun.fullDate) || typeof savedRun.resets !== 'number' ||
+      !isFinite(savedRun.resets) || savedRun.startDate !== run.startDate ||
+      savedRun.fullDate !== run.fullDate || savedRun.resets !== run.resets || !target ||
+      (intent.state === 'due' && !target.won)) {
+    AutoPlay.clearAchievementAscensionIntent();
+    return null;
+  }
+  if (intent.state === 'armed' && target.won) {
+    intent.state = 'due';
+    AutoPlay.persistAchievementAscensionIntent(intent);
+  }
+  return intent;
+}
+
+AutoPlay.armAchievementAscensionIntent = function(targetId) {
+  var intent = AutoPlay.getAchievementAscensionIntent();
+  if (intent && intent.state === 'due') return intent;
+  var target = AutoPlay.getAchievementAscensionTarget(targetId);
+  var run = AutoPlay.getAchievementAscensionRun();
+  if (!target || target.won || !run) return null;
+  if (intent && intent.state === 'armed' && intent.targetId === targetId) return intent;
+  intent = {
+    version: 1,
+    state: 'armed',
+    targetId: targetId,
+    run: run
+  };
+  AutoPlay.persistAchievementAscensionIntent(intent);
+  return intent;
+}
+
+AutoPlay.getAchievementAscensionWaitReason = function() {
+  if (Game.AscendTimer > 0 || Game.ReincarnateTimer > 0 || AutoPlay.onAscend)
+    return 'Waiting for the current ascension animation to finish.';
+  if (AutoPlay.Config.NightMode > 0 && AutoPlay.preNightMode())
+    return 'Waiting until night mode ends before ascending.';
+  if (AutoPlay.plantPending)
+    return 'Waiting for the pending garden plant before ascending.';
+  if (Game.hasBuff('Sugar frenzy'))
+    return 'Waiting for Sugar frenzy to end before ascending.';
+  if (Game.hasBuff('Sugar blessing'))
+    return 'Waiting for Sugar blessing to end before ascending.';
+  return '';
+}
+
+// A manual screen belongs to the player. Refresh the bot's run state only after
+// the player has actually reincarnated; these markers are session-only.
+AutoPlay.resumeAfterManualAscension = function() {
+  if (Game.OnAscend || Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
+  AutoPlay.manualAscensionWaitReported = false;
+  if (AutoPlay.manualAscensionRun === undefined) return;
+
+  var previousRun = AutoPlay.manualAscensionRun;
+  AutoPlay.manualAscensionRun = undefined;
+  if (Game.resets !== previousRun) {
+    AutoPlay.findNextAchievement();
+    AutoPlay.setDeadline(0);
+    AutoPlay.now = Date.now();
+    AutoPlay.loggedAchievements = {};
+    AutoPlay.resetTime = Date.now();
+    AutoPlay.neverclickWarn = true;
+    AutoPlay.ascendLimit = 0.9*Math.floor(2*(1-Game.ascendMeterPercent));
+  }
+}
 
 // Check all achievements and log newly won ones
 AutoPlay.checkAchievements = function() {
@@ -1769,46 +1926,83 @@ AutoPlay.checkAchievements = function() {
 }
 
 AutoPlay.handleAscend = function() {
-  // Check for newly won achievements
-  AutoPlay.checkAchievements();
-
   if (Game.OnAscend) {
-    AutoPlay.doReincarnate();
-    AutoPlay.findNextAchievement();
-    AutoPlay.setDeadline(0); // reactivate all activities
-    AutoPlay.savingsStart = AutoPlay.now;
-    AutoPlay.onAscend=false;
-    AutoPlay.loggedAchievements = {}; // Reset achievement tracking for new run
-    return;
-  }
-  if (AutoPlay.onAscend && Game.AscendTimer==0) Game.Ascend(true);
-  if (Game.ascensionMode == 0 && Game.prestige == 0)
-    AutoPlay.canContinue();  // update achievement goals
-  if (Game.AchievementsById[AutoPlay.nextAchievement].won) {
-    var achiev = Game.AchievementsById[AutoPlay.nextAchievement];
-    AutoPlay.logStatus('achievement', 'Unlocked: ' + achiev.name);
-
-    // Check if this is first ascension and if we should wait for 365+ prestige
-    var isFirstRun = (Game.prestige == 0);
-    var currentPrestige = Game.ascendMeterLevel;
-    var isHardcoreAchievement = (achiev.id == Game.Achievements["Hardcore"].id ||
-                                  achiev.id == Game.Achievements["Neverclick"].id ||
-                                  achiev.id == Game.Achievements["True Neverclick"].id);
-
-    if (isFirstRun && currentPrestige < 365 && !isHardcoreAchievement) {
-      // Don't ascend yet - need to reach 365+ prestige for first ascension
-      AutoPlay.logStatus('prestige', 'Waiting for 365+ prestige before first ascension (currently ' + Math.floor(currentPrestige) + ')');
+    if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
+    if (!AutoPlay.onAscend) {
+      if (AutoPlay.manualAscensionRun === undefined)
+        AutoPlay.manualAscensionRun = Game.resets;
+      if (!AutoPlay.manualAscensionWaitReported) {
+        AutoPlay.logStatus('ascend:waiting',
+          'Waiting for the player to finish manual ascension.');
+        AutoPlay.manualAscensionWaitReported = true;
+      }
       return;
     }
 
-    var date = new Date();
-    date.setTime(AutoPlay.now-Game.startDate);
-    var legacyTime = Game.sayTime(date.getTime()/1000*Game.fps,-1);
-    date.setTime(AutoPlay.now-Game.fullDate);
-    var fullTime=Game.sayTime(date.getTime()/1000*Game.fps,-1);
+    AutoPlay.manualAscensionWaitReported = false;
+    if (AutoPlay.doReincarnate()) {
+      AutoPlay.findNextAchievement();
+      AutoPlay.setDeadline(0); // reactivate all activities
+      AutoPlay.now = Date.now();
+      AutoPlay.savingsStart = AutoPlay.now;
+      AutoPlay.loggedAchievements = {}; // Reset achievement tracking for new run
+    }
+    return;
+  }
+
+  AutoPlay.resumeAfterManualAscension();
+
+  // Check for newly won achievements
+  AutoPlay.checkAchievements();
+  var intent = AutoPlay.getAchievementAscensionIntent();
+  if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
+
+  // Ownership stays set between Game.Ascend and the screen. Never issue a
+  // second Game.Ascend while that transition is in flight.
+  if (AutoPlay.onAscend) return;
+  if (AutoPlay.achievementAscensionCallStarted) return;
+  if (Game.ascensionMode == 0 && Game.prestige == 0)
+    AutoPlay.canContinue();  // update achievement goals
+  if (intent && intent.state === 'due') {
+    var dueAchievement = AutoPlay.getAchievementAscensionTarget(intent.targetId);
+    if (!dueAchievement || !dueAchievement.won) {
+      AutoPlay.clearAchievementAscensionIntent();
+      AutoPlay.findNextAchievement();
+      return;
+    }
+
+    // Check if this is first ascension and if we should wait for 365+ prestige
+    var isFirstIntentRun = (Game.prestige == 0);
+    var currentIntentPrestige = Game.ascendMeterLevel;
+    var isHardcoreIntentAchievement = (dueAchievement.id == Game.Achievements["Hardcore"].id ||
+      dueAchievement.id == Game.Achievements["Neverclick"].id ||
+      dueAchievement.id == Game.Achievements["True Neverclick"].id);
+    if (isFirstIntentRun && currentIntentPrestige < 365 && !isHardcoreIntentAchievement) {
+      AutoPlay.logStatus('prestige', 'Waiting for 365+ prestige before first ascension (currently ' +
+        Math.floor(currentIntentPrestige) + ')');
+      return;
+    }
+    var waitReason = AutoPlay.getAchievementAscensionWaitReason();
+    if (waitReason) {
+      AutoPlay.wantAscend = AutoPlay.plantPending;
+      AutoPlay.logStatus('ascend:waiting', waitReason);
+      return;
+    }
+
+    var intentDate = new Date();
+    intentDate.setTime(AutoPlay.now-Game.startDate);
+    var intentLegacyTime = Game.sayTime(intentDate.getTime()/1000*Game.fps,-1);
+    intentDate.setTime(AutoPlay.now-Game.fullDate);
+    var intentFullTime = Game.sayTime(intentDate.getTime()/1000*Game.fps,-1);
     AutoPlay.doAscend("have achievement: " +
-      achiev.ddesc.replace(/<q>.*?<\/q>/ig, '') +
-      " after " + legacyTime + "(total: " + fullTime + ")",1);
+      dueAchievement.ddesc.replace(/<q>.*?<\/q>/ig, '') +
+      " after " + intentLegacyTime + "(total: " + intentFullTime + ")", 1, true);
+    return;
+  }
+  if (Game.AchievementsById[AutoPlay.nextAchievement].won) {
+    // A won target without a matching armed marker can come from an old save.
+    // Select the next goal instead of inferring that an ascent is due.
+    AutoPlay.findNextAchievement();
     return;
   }
   if (Game.ascensionMode==1 && !AutoPlay.canContinue() && !Game.AchievementsById[AutoPlay.nextAchievement].won) {
@@ -1962,7 +2156,8 @@ AutoPlay.canContinue = function() {
 }
 
 AutoPlay.doReincarnate = function() {
-  AutoPlay.onAscend = false;
+  if (!AutoPlay.onAscend || !Game.OnAscend ||
+      Game.AscendTimer>0 || Game.ReincarnateTimer>0) return false;
   AutoPlay.delay = 10;
   AutoPlay.buyHeavenlyUpgrades();
   if (!Game.Achievements["Neverclick"].won || !Game.Achievements["Hardcore"].won) {
@@ -1972,19 +2167,29 @@ AutoPlay.doReincarnate = function() {
     Game.PickAscensionMode(); Game.nextAscensionMode=1; Game.ConfirmPrompt();
   }
   Game.Reincarnate(true);
+  AutoPlay.onAscend = false;
+  AutoPlay.achievementAscensionCallStarted = false;
   AutoPlay.resetTime=Date.now(); // save the current date for things that need to be delayed after reincarnating
   AutoPlay.neverclickWarn=true;
   AutoPlay.ascendLimit = 0.9*Math.floor(2*(1-Game.ascendMeterPercent));
+  return true;
 }
 
 AutoPlay.mustRebornAscend = function() {
   return !([78,93,94,95].every(function(a) { return Game.AchievementsById[a].won; }));
 }
 
-AutoPlay.doAscend = function(str,log) {
+AutoPlay.doAscend = function(str,log,achievementIntent) {
   if (Game.AscendTimer>0 || Game.ReincarnateTimer>0) return;
   if (AutoPlay.onAscend || Game.OnAscend) return;
-  AutoPlay.logStatus('ascend', str);
+  if (achievementIntent) {
+    var waitReason = AutoPlay.getAchievementAscensionWaitReason();
+    if (waitReason) {
+      AutoPlay.wantAscend = AutoPlay.plantPending;
+      AutoPlay.logStatus('ascend:waiting', waitReason);
+      return false;
+    }
+  } else AutoPlay.logStatus('ascend', str);
   AutoPlay.wantAscend = AutoPlay.plantPending /*|| AutoPlay.harvestPlant*/;
   AutoPlay.addActivity("Preparing to ascend.");
   if (AutoPlay.wantAscend) return; // do not ascend when we wait for a plant
@@ -2013,18 +2218,43 @@ AutoPlay.doAscend = function(str,log) {
     Game.ObjectsById.forEach(function(e) { e.sell(e.amount); } );
     Game.Upgrades["Chocolate egg"].buy();
     AutoPlay.delay = 10;
+    if (achievementIntent)
+      AutoPlay.logStatus('ascend:waiting', 'Preparing the Chocolate egg before ascending.');
   } else {
-    AutoPlay.info(str); AutoPlay.loggingInfo=log?str:0;
-    // Log prestige gain
-    var prestigeGain = Game.ascendMeterLevel;
-    var newPrestige = Game.prestige + prestigeGain;
-    if (typeof Beautify !== 'undefined' && prestigeGain > 0) {
-      AutoPlay.logAction('Ascending', str + ' | Prestige: ' + Beautify(Game.prestige) + ' → ' + Beautify(newPrestige) + ' (+' + Beautify(prestigeGain) + ')');
+    if (achievementIntent) {
+      try {
+        Game.Ascend(true);
+      } catch (e) {
+        AutoPlay.logStatus('ascend:waiting', 'Ascension call failed; achievement intent retained for retry.');
+        return false;
+      }
+      AutoPlay.clearAchievementAscensionIntent();
+      AutoPlay.achievementAscensionCallStarted = true;
+      AutoPlay.onAscend = true;
+      AutoPlay.logStatus('ascend', str);
+      AutoPlay.info(str); AutoPlay.loggingInfo=log?str:0;
+      // Log prestige gain only after Game.Ascend(true) returns successfully.
+      var prestigeGain = Game.ascendMeterLevel;
+      var newPrestige = Game.prestige + prestigeGain;
+      if (typeof Beautify !== 'undefined' && prestigeGain > 0) {
+        AutoPlay.logAction('Ascending', str + ' | Prestige: ' + Beautify(Game.prestige) + ' → ' + Beautify(newPrestige) + ' (+' + Beautify(prestigeGain) + ')');
+      } else {
+        AutoPlay.logAction('Ascending', str);
+      }
+      AutoPlay.logging(); AutoPlay.delay=15;
     } else {
-      AutoPlay.logAction('Ascending', str);
+      // Preserve the existing logging and call order for non-achievement ascensions.
+      AutoPlay.info(str); AutoPlay.loggingInfo=log?str:0;
+      var prestigeGain = Game.ascendMeterLevel;
+      var newPrestige = Game.prestige + prestigeGain;
+      if (typeof Beautify !== 'undefined' && prestigeGain > 0) {
+        AutoPlay.logAction('Ascending', str + ' | Prestige: ' + Beautify(Game.prestige) + ' → ' + Beautify(newPrestige) + ' (+' + Beautify(prestigeGain) + ')');
+      } else {
+        AutoPlay.logAction('Ascending', str);
+      }
+      AutoPlay.logging(); AutoPlay.delay=15; Game.Ascend(true);
+      AutoPlay.onAscend = true;
     }
-    AutoPlay.logging(); AutoPlay.delay=15; Game.Ascend(true);
-    AutoPlay.onAscend=true;
   }
 }
 
@@ -2068,16 +2298,28 @@ AutoPlay.setMainActivity = function(str) {
 
 AutoPlay.findNextAchievement = function() {
   AutoPlay.wantAscend = false;
+  var intent = AutoPlay.getAchievementAscensionIntent();
+  if (intent && intent.state === 'due') {
+    AutoPlay.nextAchievement = intent.targetId;
+    var dueTarget = AutoPlay.getAchievementAscensionTarget(intent.targetId);
+    AutoPlay.setMainActivity("Waiting to ascend for achievement: " +
+      dueTarget.ddesc.replace(/<q>.*?<\/q>/ig, ''));
+    return;
+  }
   AutoPlay.handleSmallAchievements();
   for (var i = 0; i<AutoPlay.wantedAchievements.length; i++) {
     if (!(Game.AchievementsById[AutoPlay.wantedAchievements[i]].won)) {
       AutoPlay.nextAchievement = AutoPlay.wantedAchievements[i];
+      AutoPlay.armAchievementAscensionIntent(AutoPlay.nextAchievement);
       AutoPlay.setMainActivity("Trying to get achievement: " +
         Game.AchievementsById[AutoPlay.nextAchievement].ddesc.replace(/<q>.*?<\/q>/ig, ''));
       return;
     }
   }
   AutoPlay.checkAllAchievementsOK();
+  var nextTarget = AutoPlay.getAchievementAscensionTarget(AutoPlay.nextAchievement);
+  if (nextTarget && !nextTarget.won)
+    AutoPlay.armAchievementAscensionIntent(AutoPlay.nextAchievement);
 }
 
 AutoPlay.checkAllAchievementsOK = function() { //We do not stop for one-year legacy
@@ -3255,7 +3497,9 @@ AutoPlay.launch = function() {
     clearInterval(AutoPlay.autoPlayer);
   }
   AutoPlay.autoPlayer = setInterval(AutoPlay.run, 300); // 100 is too quick
-  AutoPlay.findNextAchievement();
+  // findNextAchievement() runs small-achievement handlers (including prompt
+  // and ticker actions), so defer it while a restored manual screen is open.
+  if (!Game.OnAscend) AutoPlay.findNextAchievement();
   l('versionNumber').innerHTML=
     'v. '+Game.version+" (with autoplay v."+AutoPlay.version+")";
   l('versionNumber').innerHTML='v. '+Game.version+' <span '+
